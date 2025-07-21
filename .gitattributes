@@ -1,0 +1,5 @@
+# Auto normalize text files
+* text=auto
+
+# Force JavaScript files to use LF
+*.js text eol=lf
