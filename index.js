@@ -48,15 +48,15 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-// Middleware
 const allowedOrigins = [
-  "https://jaw-breaker-06.netlify.app", // your deployed frontend
-  "http://localhost:5173"               // local development
+  "http://localhost:5173",
+  "https://jaw-breaker-06.netlify.app"
 ];
 
 app.use(
   cors({
     origin: function (origin, callback) {
+      // allow requests with no origin (like mobile apps or curl)
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
@@ -66,6 +66,7 @@ app.use(
     credentials: true,
   })
 );
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
