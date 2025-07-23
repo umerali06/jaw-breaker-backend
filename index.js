@@ -32,6 +32,7 @@ initializePassport();
 import uploadRoutes from "./routes/upload.js";
 import aiRoutes from "./routes/ai.js";
 import authRoutes from "./routes/auth.js";
+import patientsRoutes from "./routes/patients.js";
 
 // Create Express app
 const app = express();
@@ -80,6 +81,7 @@ app.use("/uploads", express.static(join(__dirname, "uploads")));
 app.use("/api/auth", authRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/ai", aiRoutes);
+app.use("/api/patients", patientsRoutes);
 
 // Health check route
 app.get("/api/health", (req, res) => {

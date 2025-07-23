@@ -18,10 +18,15 @@ console.log(
   apiKey.substring(0, 10) + "..."
 );
 
+// Add a warning about using only the flash model
+console.log(
+  "WARNING: Using gemini-1.5-flash model for all services as a temporary fix. Please update your API key for full functionality."
+);
+
 // Define available models and fallbacks
 const MODELS = {
   FLASH: "gemini-1.5-flash",
-  PRO: "gemini-1.5-pro",
+  PRO: "gemini-1.5-flash", // Changed from gemini-1.5-pro to gemini-1.5-flash as a temporary fix
   FALLBACK: "gemini-pro", // Legacy fallback model
 };
 
@@ -286,7 +291,8 @@ export const generateOASISScores = async (
   ]
 ) => {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+    // Changed from gemini-1.5-pro to gemini-1.5-flash since that model is working
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     const systemPrompt = `You are a certified OASIS specialist with extensive experience in CMS home health regulations. Provide accurate, defensible OASIS scores based on clinical documentation.
 
@@ -401,7 +407,8 @@ ${text.substring(0, 8000)}`;
 export const generateClinicalAnalysis = async (text) => {
   try {
     console.log("Starting enhanced clinical analysis...");
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+    // Changed from gemini-1.5-pro to gemini-1.5-flash since that model is working
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     const systemPrompt = `You are an expert clinical documentation assistant with specialized knowledge in:
 - Home Health Care & Skilled Nursing
@@ -621,12 +628,16 @@ export const analyzeDocument = async (
     // Extract text from file
     const text = await extractTextFromFile(filePath, mimetype);
 
-    // Generate comprehensive analysis
-    const [clinicalAnalysis, soapNote, oasisScores] = await Promise.all([
-      generateClinicalAnalysis(text),
-      generateSOAPNote(text, patientContext),
-      generateOASISScores(text),
-    ]);
+    // Generate comprehensive analysis - using sequential calls instead of Promise.all to avoid rate limiting
+    // This can help prevent multiple simultaneous calls to the API which might cause failures
+    console.log("Generating SOAP note...");
+    const soapNote = await generateSOAPNote(text, patientContext);
+
+    console.log("Generating clinical analysis...");
+    const clinicalAnalysis = await generateClinicalAnalysis(text);
+
+    console.log("Generating OASIS scores...");
+    const oasisScores = await generateOASISScores(text);
 
     // Combine results into comprehensive analysis
     return {
@@ -649,23 +660,22 @@ export const analyzeDocument = async (
 };
 
 /**
- * Chat with AI assistant for clinical insights
+ * Enhanced chat with AI assistant for clinical insights with NLP-based context awareness
  * @param {string} message - User message
- * @param {Object} context - Optional context including patient data
+ * @param {Object} context - Rich context including patient data, document content, and clinical insights
  * @returns {Promise<string>} - AI response
  */
 export const chatWithAI = async (message, context = {}) => {
   try {
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    const systemPrompt = `You are a clinical documentation assistant specializing in:
+    const systemPrompt = `You are an advanced clinical documentation assistant with expertise in:
 - OASIS (Outcome and Assessment Information Set) scoring and analysis
 - SOAP note generation and clinical documentation
 - Clinical insights and care plan recommendations
 - Medical terminology and healthcare compliance
 - Patient assessment and intervention strategies
-
-You provide accurate, professional, and clinically relevant responses. Always maintain HIPAA compliance and medical accuracy.
+- Natural language processing of medical documents
 
 CAPABILITIES:
 - Complete OASIS scoring (M1830, M1860, etc.) with CMS format and rationale
@@ -673,24 +683,112 @@ CAPABILITIES:
 - Summarize care plan goals for multiple conditions
 - Document wound findings and assessments
 - Provide clinical reasoning and recommendations
+- Analyze patient documentation for insights
+- Answer questions based on document context
 
-Always respond in a clear, structured, and compliant format suitable for clinical documentation.`;
+RESPONSE GUIDELINES:
+1. Always provide clinically accurate, evidence-based responses
+2. Format responses clearly with appropriate headings and structure using markdown
+3. When referencing document content, cite the specific source
+4. Prioritize patient safety and clinical best practices
+5. Maintain HIPAA compliance and medical accuracy
+6. Use professional medical terminology appropriate for healthcare providers
+7. When answering questions about a specific document, focus on that document's content
+8. If the question requires information not in the context, acknowledge limitations
+
+MARKDOWN FORMATTING:
+- Use **bold text** for emphasis and important points
+- Use *italics* for secondary emphasis
+- Use ## for section headings and ### for subsection headings
+- Use bullet points (- item) for lists
+- Use numbered lists (1. item) for sequential steps
+- Use > for important notes or quotes
+- Format clinical terms appropriately
+
+Always respond in a clear, structured, and compliant format suitable for clinical documentation, using markdown formatting to enhance readability.`;
 
     let userPrompt = message;
+    let contextualInformation = "";
 
-    // Add context if provided
+    // Add rich context if provided
     if (context.patientName) {
-      userPrompt += `\n\nPatient Context: ${context.patientName}`;
+      contextualInformation += `\n\nPATIENT INFORMATION:\nName: ${context.patientName}`;
     }
 
+    // Add document names if available
     if (context.recentDocuments && context.recentDocuments.length > 0) {
-      userPrompt += `\nRecent Documents: ${context.recentDocuments.join(", ")}`;
+      contextualInformation += `\n\nRECENT DOCUMENTS:\n${context.recentDocuments.join(
+        "\n"
+      )}`;
     }
 
-    const prompt = `${systemPrompt}\n\n${userPrompt}`;
+    // Add latest clinical summary if available
+    if (context.latestSummary) {
+      contextualInformation += `\n\nLATEST CLINICAL SUMMARY:\n${context.latestSummary}`;
+    }
 
+    // Add clinical insights if available
+    if (context.clinicalInsights && context.clinicalInsights.length > 0) {
+      contextualInformation += `\n\nKEY CLINICAL INSIGHTS:`;
+      context.clinicalInsights.forEach((insight) => {
+        contextualInformation += `\n- [${insight.priority.toUpperCase()}] ${
+          insight.type
+        }: ${insight.message}`;
+      });
+    }
+
+    // Add OASIS scores if available
+    if (context.patientData && context.patientData.oasisScores) {
+      contextualInformation += `\n\nOASIS SCORES:`;
+      Object.entries(context.patientData.oasisScores).forEach(
+        ([item, data]) => {
+          contextualInformation += `\n${item}: Score ${data.score} - ${
+            data.rationale
+              ? data.rationale.substring(0, 100)
+              : "No rationale provided"
+          }`;
+        }
+      );
+    }
+
+    // Add SOAP note summary if available
+    if (context.patientData && context.patientData.soapNote) {
+      const soap = context.patientData.soapNote;
+      contextualInformation += `\n\nSOAP NOTE SUMMARY:`;
+      if (soap.subjective)
+        contextualInformation += `\nSubjective: ${soap.subjective.substring(
+          0,
+          150
+        )}...`;
+      if (soap.objective)
+        contextualInformation += `\nObjective: ${soap.objective.substring(
+          0,
+          150
+        )}...`;
+      if (soap.assessment)
+        contextualInformation += `\nAssessment: ${soap.assessment.substring(
+          0,
+          150
+        )}...`;
+      if (soap.plan)
+        contextualInformation += `\nPlan: ${soap.plan.substring(0, 150)}...`;
+    }
+
+    // Add document content if available (most valuable context)
+    if (context.documentContent && context.documentContent.length > 0) {
+      contextualInformation += `\n\nDOCUMENT CONTENT:`;
+      context.documentContent.forEach((doc) => {
+        contextualInformation += `\n\nFrom document "${doc.filename}":\n${doc.content}`;
+      });
+    }
+
+    // Combine everything into a well-structured prompt
+    const prompt = `${systemPrompt}\n\nUSER QUERY: ${userPrompt}\n\nCONTEXT INFORMATION:${contextualInformation}\n\nPlease provide a comprehensive, clinically accurate response to the user's query based on the available context. Use markdown formatting (bold, italics, headings, lists) to make your response more readable and structured.`;
+
+    console.log("Sending enhanced prompt to Gemini API");
     const result = await model.generateContent(prompt);
     const response = await result.response;
+    console.log("Received response from Gemini API");
 
     return response.text();
   } catch (error) {
@@ -715,7 +813,14 @@ export const testConnection = async () => {
     );
     const response = await result.response;
     const text = response.text();
-    return { success: true, text, response: response }; // Return full response
+
+    console.log("Gemini API test successful:", text);
+    return {
+      success: true,
+      text,
+      response: response,
+      model: "gemini-1.5-flash",
+    }; // Return full response with model info
   } catch (error) {
     console.error("Gemini test error:", error);
     return { success: false, error: error.message, stack: error.stack };

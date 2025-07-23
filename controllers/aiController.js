@@ -433,6 +433,99 @@ export const generateCustomAnalysis = async (req, res) => {
         }
 
         await file.save();
+      } else if (type === "summary") {
+        // Generate summary for the document
+        console.log("Generating summary for document:", file.originalname);
+
+        // Extract text from file first
+        const { extractTextFromFile, analyzeDocument } = await import(
+          "../services/geminiService.js"
+        );
+
+        const text = await extractTextFromFile(file.path, file.mimetype);
+
+        if (!text || text.trim().length === 0) {
+          throw new Error(
+            "No text could be extracted from the file. Please ensure the file contains readable text content."
+          );
+        }
+
+        // Prepare patient context
+        const patientContext = {
+          name: file.patientName,
+          id: file.patientId,
+        };
+
+        // Generate summary using AI chat
+        const { chatWithAI } = await import("../services/geminiService.js");
+
+        const summaryPrompt = `Please provide a comprehensive clinical summary of the following patient documentation. Focus on key findings, patient status, and important clinical information:\n\n${text.substring(
+          0,
+          8000
+        )}`;
+
+        result = await chatWithAI(summaryPrompt, patientContext);
+
+        // Save the summary to the file
+        file.aiSummary = result;
+        await file.save();
+      } else if (type === "insights") {
+        // Generate clinical insights for the document
+        console.log(
+          "Generating clinical insights for document:",
+          file.originalname
+        );
+
+        // Extract text from file first
+        const { extractTextFromFile, analyzeDocument } = await import(
+          "../services/geminiService.js"
+        );
+
+        const text = await extractTextFromFile(file.path, file.mimetype);
+
+        if (!text || text.trim().length === 0) {
+          throw new Error(
+            "No text could be extracted from the file. Please ensure the file contains readable text content."
+          );
+        }
+
+        // Prepare patient context
+        const patientContext = {
+          name: file.patientName,
+          id: file.patientId,
+        };
+
+        // Generate clinical insights using AI
+        const { chatWithAI } = await import("../services/geminiService.js");
+
+        const insightsPrompt = `Analyze the following patient documentation and provide clinical insights in JSON format. Each insight should have: priority (critical/high/medium/low), type (risk/improvement/alert/recommendation/safety/medication/wound/nutrition), message, and evidence. Return as an array of insight objects:\n\n${text.substring(
+          0,
+          8000
+        )}`;
+
+        const insightsResponse = await chatWithAI(
+          insightsPrompt,
+          patientContext
+        );
+
+        // Try to parse the response as JSON, fallback to creating insights from text
+        try {
+          result = JSON.parse(insightsResponse);
+        } catch (parseError) {
+          // If parsing fails, create a basic insight structure
+          result = [
+            {
+              priority: "medium",
+              type: "recommendation",
+              message: insightsResponse,
+              evidence: "AI analysis of patient documentation",
+            },
+          ];
+        }
+
+        // Save the insights to the file
+        file.clinicalInsights = result;
+        await file.save();
       } else {
         // Custom analysis with user prompt
         if (!prompt) {
@@ -498,7 +591,7 @@ export const generateCustomAnalysis = async (req, res) => {
 };
 
 /**
- * Chat with AI assistant for clinical insights
+ * Chat with AI assistant for clinical insights with enhanced context awareness
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
  */
@@ -513,15 +606,30 @@ export const chatWithAI = async (req, res) => {
       });
     }
 
-    // Build enhanced context
+    console.log("Chat request received:", {
+      message,
+      patientId,
+      hasContext: !!context,
+    });
+
+    // Build enhanced context with NLP-ready structure
     let chatContext = {
       patientName: context?.patientName,
       recentDocuments: [],
+      documentContent: [],
+      latestSummary: context?.latestSummary || null,
+      clinicalInsights: [],
+      patientData: {},
+      focusedDocument: context?.focusedDocument || null,
     };
 
-    // If patient ID is provided, get recent file data for context
+    // Track if we're focusing on a specific document
+    let specificFileRequested = false;
+
+    // If patient ID is provided, get comprehensive patient data for context
     if (patientId) {
       try {
+        // Get recent files with full content for context
         const recentFiles = await File.find({
           userId: req.userId,
           patientId: patientId,
@@ -530,9 +638,127 @@ export const chatWithAI = async (req, res) => {
           .limit(3);
 
         if (recentFiles.length > 0) {
+          console.log(`Found ${recentFiles.length} recent files for context`);
+
+          // Add file names
           chatContext.recentDocuments = recentFiles.map(
             (file) => file.originalname
           );
+
+          // Extract clinical insights from files
+          const allInsights = [];
+          recentFiles.forEach((file) => {
+            if (file.clinicalInsights && file.clinicalInsights.length > 0) {
+              allInsights.push(...file.clinicalInsights);
+            }
+          });
+
+          if (allInsights.length > 0) {
+            // Sort insights by priority (high to low)
+            const priorityOrder = { critical: 4, high: 3, medium: 2, low: 1 };
+            allInsights.sort(
+              (a, b) =>
+                (priorityOrder[b.priority] || 0) -
+                (priorityOrder[a.priority] || 0)
+            );
+
+            // Limit to most important insights
+            chatContext.clinicalInsights = allInsights.slice(0, 5);
+            console.log(
+              `Added ${chatContext.clinicalInsights.length} clinical insights to context`
+            );
+          }
+
+          // Check if we should focus on a specific document mentioned in the context
+          let focusedFile = null;
+
+          if (context?.focusedDocument) {
+            console.log(
+              "User is asking about a specific document:",
+              context.focusedDocument
+            );
+            specificFileRequested = true;
+
+            // Find the specific file the user is asking about
+            focusedFile = recentFiles.find(
+              (file) =>
+                file.originalname === context.focusedDocument ||
+                file._id.toString() === context.focusedDocument
+            );
+
+            if (focusedFile) {
+              console.log(`Found focused file: ${focusedFile.originalname}`);
+            } else {
+              console.log(`Focused file not found: ${context.focusedDocument}`);
+            }
+          }
+
+          // If we have a specific file to focus on, prioritize that one
+          const filesToProcess =
+            specificFileRequested && focusedFile
+              ? [focusedFile]
+              : // Otherwise use the most recent file
+                [recentFiles[0]];
+
+          // Extract content from the file(s)
+          for (const file of filesToProcess) {
+            if (file.path) {
+              try {
+                const { extractTextFromFile } = await import(
+                  "../services/geminiService.js"
+                );
+                const fileContent = await extractTextFromFile(
+                  file.path,
+                  file.mimetype
+                );
+
+                // Add the content with more context if it's the focused file
+                if (fileContent && fileContent.length > 0) {
+                  // Use more content (up to 4000 chars) if it's the specific file requested
+                  const contentLimit = specificFileRequested ? 4000 : 2000;
+
+                  chatContext.documentContent.push({
+                    filename: file.originalname,
+                    fileId: file._id.toString(),
+                    content:
+                      fileContent.substring(0, contentLimit) +
+                      (fileContent.length > contentLimit ? "..." : ""),
+                    isFocused:
+                      specificFileRequested &&
+                      focusedFile &&
+                      file._id.toString() === focusedFile._id.toString(),
+                  });
+
+                  console.log(
+                    `Added document content to context from ${file.originalname}`
+                  );
+                }
+              } catch (extractError) {
+                console.log(
+                  `Could not extract file content from ${file.originalname}:`,
+                  extractError.message
+                );
+              }
+            }
+          }
+
+          // Add OASIS scores if available
+          const latestFileWithScores = recentFiles.find(
+            (file) => file.oasisScores && file.oasisScores.size > 0
+          );
+          if (latestFileWithScores) {
+            chatContext.patientData.oasisScores = Object.fromEntries(
+              latestFileWithScores.oasisScores
+            );
+            console.log("Added OASIS scores to context");
+          }
+
+          // Add SOAP note if available
+          const latestFileWithSoap = recentFiles.find((file) => file.soapNote);
+          if (latestFileWithSoap && latestFileWithSoap.soapNote) {
+            chatContext.patientData.soapNote = latestFileWithSoap.soapNote;
+            console.log("Added SOAP note to context");
+          }
         }
       } catch (error) {
         console.log(
@@ -542,10 +768,11 @@ export const chatWithAI = async (req, res) => {
       }
     }
 
-    // Use the enhanced AI chat service
+    // Use the enhanced AI chat service with rich context
+    console.log("Sending chat request to AI service with enhanced context");
     const aiResponse = await aiChatService(message, chatContext);
 
-    // Return the AI response
+    // Return the AI response with context metadata
     res.status(200).json({
       success: true,
       response: aiResponse,
@@ -553,6 +780,14 @@ export const chatWithAI = async (req, res) => {
         patientId,
         hasContext: !!context,
         documentsIncluded: chatContext.recentDocuments.length,
+        insightsIncluded: chatContext.clinicalInsights.length,
+        hasDocumentContent: chatContext.documentContent.length > 0,
+        hasOasisScores: !!chatContext.patientData.oasisScores,
+        hasSoapNote: !!chatContext.patientData.soapNote,
+        focusedDocument:
+          specificFileRequested && chatContext.documentContent.length > 0
+            ? chatContext.documentContent.find((doc) => doc.isFocused)?.fileId
+            : null,
       },
     });
   } catch (error) {

@@ -22,6 +22,83 @@ router.post("/analyze/:fileId", analyzeFile);
 // Route to get analysis results
 router.get("/analysis/:fileId", getAnalysis);
 
+// Route to get analysis status
+router.get("/analysis/:fileId/status", async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    const File = (await import("../models/File.js")).default;
+
+    const file = await File.findById(fileId);
+
+    if (!file) {
+      return res.status(404).json({
+        success: false,
+        message: "File not found",
+      });
+    }
+
+    // Verify file belongs to the authenticated user
+    if (file.userId && file.userId.toString() !== req.userId) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to access this file",
+      });
+    }
+
+    let progress = 0;
+    let status = file.processingStatus || "pending";
+
+    // Calculate progress based on status
+    switch (status) {
+      case "pending":
+        progress = 0;
+        break;
+      case "processing":
+        // Estimate progress based on time elapsed
+        const startTime = file.processingStarted
+          ? new Date(file.processingStarted)
+          : new Date();
+        const currentTime = new Date();
+        const elapsedTime = (currentTime - startTime) / 1000; // in seconds
+
+        // Assume analysis takes about 30 seconds on average
+        progress = Math.min(Math.round((elapsedTime / 30) * 100), 95);
+        break;
+      case "completed":
+        progress = 100;
+        break;
+      case "failed":
+        progress = 100;
+        break;
+      default:
+        progress = 0;
+    }
+
+    res.status(200).json({
+      success: true,
+      status,
+      progress,
+      error: file.processingError || null,
+      result:
+        status === "completed"
+          ? {
+              summary: file.aiSummary,
+              oasisScores: file.oasisScores,
+              soapNote: file.soapNote,
+              clinicalInsights: file.clinicalInsights,
+            }
+          : null,
+    });
+  } catch (error) {
+    console.error("Error getting analysis status:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error getting analysis status",
+      error: error.message,
+    });
+  }
+});
+
 // Route to generate custom analysis
 router.post("/custom/:fileId", generateCustomAnalysis);
 
