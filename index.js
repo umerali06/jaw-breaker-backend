@@ -111,14 +111,68 @@ app.get("/api/health", (req, res) => {
   res.status(200).json({ status: "ok", message: "Server is running" });
 });
 
-// MongoDB connection
-mongoose
-  .connect(process.env.MONGODB_URI || "mongodb://localhost:27017/jawbreaker", {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  })
-  .then(() => console.log("Connected to MongoDB"))
-  .catch((err) => console.error("MongoDB connection error:", err));
+// MongoDB connection with improved error handling
+const connectDB = async () => {
+  try {
+    const mongoURI =
+      process.env.MONGODB_URI || "mongodb://localhost:27017/jawbreaker";
+    console.log("Attempting to connect to MongoDB...");
+    console.log(
+      "MongoDB URI:",
+      mongoURI.replace(/\/\/([^:]+):([^@]+)@/, "//***:***@")
+    ); // Hide credentials in logs
+
+    const conn = await mongoose.connect(mongoURI, {
+      serverSelectionTimeoutMS: 10000, // 10 seconds timeout
+      socketTimeoutMS: 45000, // 45 seconds socket timeout
+      maxPoolSize: 10, // Maintain up to 10 socket connections
+    });
+
+    console.log(`✅ Connected to MongoDB: ${conn.connection.host}`);
+  } catch (error) {
+    console.error("❌ MongoDB connection error:", error.message);
+
+    // More specific error handling
+    if (error.message.includes("ETIMEOUT")) {
+      console.error(
+        "🔍 DNS/Network timeout - Check your internet connection and MongoDB Atlas IP whitelist"
+      );
+    } else if (error.message.includes("authentication failed")) {
+      console.error(
+        "🔍 Authentication failed - Check your MongoDB credentials"
+      );
+    } else if (error.message.includes("ENOTFOUND")) {
+      console.error(
+        "🔍 DNS resolution failed - Check your MongoDB cluster URL"
+      );
+    }
+
+    // Don't exit in development, but log the error
+    if (process.env.NODE_ENV === "production") {
+      process.exit(1);
+    } else {
+      console.log(
+        "⚠️  Continuing without MongoDB connection in development mode"
+      );
+    }
+  }
+};
+
+// Handle MongoDB connection events
+mongoose.connection.on("connected", () => {
+  console.log("✅ Mongoose connected to MongoDB");
+});
+
+mongoose.connection.on("error", (err) => {
+  console.error("❌ Mongoose connection error:", err);
+});
+
+mongoose.connection.on("disconnected", () => {
+  console.log("⚠️  Mongoose disconnected from MongoDB");
+});
+
+// Connect to MongoDB
+connectDB();
 
 // Start server
 app.listen(PORT, () => {
