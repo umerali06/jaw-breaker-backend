@@ -98,7 +98,7 @@ const fileSchema = new mongoose.Schema({
     default: [],
   },
   skilledNeedJustification: {
-    type: String,
+    type: mongoose.Schema.Types.Mixed, // Allow both String and Object
     default: null,
   },
   createdAt: {
