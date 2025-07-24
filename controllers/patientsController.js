@@ -4,7 +4,7 @@ import Patient from "../models/Patient.js";
 export const createPatient = async (req, res) => {
   try {
     // Validate required fields
-    const { name, age, gender, phone, email } = req.body;
+    const { name, age, gender, phone } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({
@@ -34,29 +34,8 @@ export const createPatient = async (req, res) => {
       });
     }
 
-    if (!email || !email.trim() || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-      return res.status(400).json({
-        success: false,
-        message: "Valid email is required",
-      });
-    }
-
-    // Check if patient with same email already exists for this user
-    const existingPatient = await Patient.findOne({
-      email: email.toLowerCase(),
-      userId: req.userId,
-    });
-
-    if (existingPatient) {
-      return res.status(400).json({
-        success: false,
-        message: "A patient with this email already exists",
-      });
-    }
-
     const patient = new Patient({
       ...req.body,
-      email: email.toLowerCase(),
       userId: req.userId,
     });
 
@@ -83,7 +62,6 @@ export const getAllPatients = async (req, res) => {
     if (search) {
       query.$or = [
         { name: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
         { phone: { $regex: search, $options: "i" } },
       ];
     }
@@ -149,32 +127,6 @@ export const updatePatient = async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body;
-
-    // Validate email if provided
-    if (updates.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(updates.email)) {
-      return res.status(400).json({
-        success: false,
-        message: "Valid email is required",
-      });
-    }
-
-    // Check if email is being changed and if it already exists
-    if (updates.email) {
-      const existingPatient = await Patient.findOne({
-        email: updates.email.toLowerCase(),
-        userId: req.userId,
-        _id: { $ne: id },
-      });
-
-      if (existingPatient) {
-        return res.status(400).json({
-          success: false,
-          message: "A patient with this email already exists",
-        });
-      }
-
-      updates.email = updates.email.toLowerCase();
-    }
 
     const patient = await Patient.findOneAndUpdate(
       { _id: id, userId: req.userId },

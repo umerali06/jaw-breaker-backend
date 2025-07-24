@@ -48,10 +48,21 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
+// Get client URL from environment variable or use default origins
+const clientUrl = process.env.CLIENT_URL;
 const allowedOrigins = [
   "http://localhost:5173",
-  "https://jaw-breaker-06.netlify.app"
+  "http://localhost:5174",
+  "https://jaw-breaker-06.netlify.app",
 ];
+
+// Add client URL to allowed origins if it's not already included
+if (clientUrl && !allowedOrigins.includes(clientUrl)) {
+  allowedOrigins.push(clientUrl);
+}
+
+// Log CORS configuration
+console.log("CORS allowed origins:", allowedOrigins);
 
 app.use(
   cors({

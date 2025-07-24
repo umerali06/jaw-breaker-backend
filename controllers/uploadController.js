@@ -37,57 +37,81 @@ export const uploadFile = async (req, res) => {
       newFile.processingStarted = new Date();
       await newFile.save();
 
-      // Import and call analysis function asynchronously
-      import("./aiController.js")
-        .then(async (aiController) => {
-          try {
-            // Create a mock request object for the analysis
-            const analysisReq = {
-              params: { fileId: newFile._id.toString() },
-              userId: req.userId,
-            };
+      // Start analysis in background without blocking the response
+      setImmediate(async () => {
+        try {
+          // Import AI controller
+          const aiController = await import("./aiController.js");
 
-            // Create a mock response object
-            const analysisRes = {
-              status: (code) => ({
-                json: (data) => {
-                  console.log(
-                    `Analysis completed for ${newFile.originalname}:`,
-                    data.success ? "Success" : "Failed"
-                  );
-                  if (!data.success) {
-                    console.error("Analysis error:", data.error);
+          // Create a mock request object for the analysis
+          const analysisReq = {
+            params: { fileId: newFile._id.toString() },
+            userId: req.userId,
+          };
+
+          // Create a mock response object that properly handles the response
+          const analysisRes = {
+            status: (code) => ({
+              json: async (data) => {
+                console.log(
+                  `Analysis completed for ${newFile.originalname}:`,
+                  data.success ? "Success" : "Failed"
+                );
+
+                if (!data.success) {
+                  console.error("Analysis error:", data.error);
+
+                  // Update file status to failed
+                  try {
+                    const failedFile = await File.findById(newFile._id);
+                    if (failedFile) {
+                      failedFile.processingStatus = "failed";
+                      failedFile.processingError =
+                        data.error || "Auto-analysis failed";
+                      failedFile.processingCompleted = new Date();
+                      await failedFile.save();
+                      console.log(
+                        `File ${newFile.originalname} marked as failed`
+                      );
+                    }
+                  } catch (updateError) {
+                    console.error(
+                      "Error updating failed file status:",
+                      updateError
+                    );
                   }
-                },
-              }),
-            };
+                } else {
+                  console.log(
+                    `File ${newFile.originalname} analysis completed successfully`
+                  );
+                }
+              },
+            }),
+          };
 
-            // Call the analysis function
-            await aiController.analyzeFile(analysisReq, analysisRes);
-          } catch (error) {
-            console.error(
-              `Auto-analysis failed for file ${newFile._id}:`,
-              error
-            );
+          // Call the analysis function
+          await aiController.analyzeFile(analysisReq, analysisRes);
+        } catch (error) {
+          console.error(`Auto-analysis failed for file ${newFile._id}:`, error);
 
-            // Update file status to failed
-            try {
-              const failedFile = await File.findById(newFile._id);
-              if (failedFile) {
-                failedFile.processingStatus = "failed";
-                failedFile.processingError =
-                  error.message || "Auto-analysis failed";
-                failedFile.processingCompleted = new Date();
-                await failedFile.save();
-              }
-            } catch (updateError) {
-              console.error("Error updating failed file status:", updateError);
+          // Update file status to failed
+          try {
+            const failedFile = await File.findById(newFile._id);
+            if (failedFile) {
+              failedFile.processingStatus = "failed";
+              failedFile.processingError =
+                error.message || "Auto-analysis failed";
+              failedFile.processingCompleted = new Date();
+              await failedFile.save();
+              console.log(
+                `File ${newFile.originalname} marked as failed due to error`
+              );
             }
+          } catch (updateError) {
+            console.error("Error updating failed file status:", updateError);
           }
-        })
-        .catch((error) => {
-          console.error("Error importing AI controller:", error);
-        });
+        }
+      });
     }
 
     // Return success response
@@ -131,8 +155,24 @@ export const getAllFiles = async (req, res) => {
         mimetype: file.mimetype,
         size: file.size,
         processingStatus: file.processingStatus,
+        processingStarted: file.processingStarted,
+        processingCompleted: file.processingCompleted,
+        processingError: file.processingError,
         patientName: file.patientName,
         patientId: file.patientId,
+        // Include all AI analysis fields
+        aiSummary: file.aiSummary,
+        clinicalInsights: file.clinicalInsights,
+        extractedEntities: file.extractedEntities,
+        oasisScores: file.oasisScores
+          ? Object.fromEntries(file.oasisScores)
+          : {},
+        soapNote: file.soapNote,
+        careGoals: file.careGoals,
+        interventions: file.interventions,
+        riskFactors: file.riskFactors,
+        providerCommunication: file.providerCommunication,
+        skilledNeedJustification: file.skilledNeedJustification,
         createdAt: file.createdAt,
       })),
     });
@@ -161,12 +201,30 @@ export const getFileById = async (req, res) => {
       success: true,
       file: {
         id: file._id,
+        _id: file._id,
         filename: file.filename,
         originalname: file.originalname,
         mimetype: file.mimetype,
         size: file.size,
         processingStatus: file.processingStatus,
+        processingStarted: file.processingStarted,
+        processingCompleted: file.processingCompleted,
+        processingError: file.processingError,
+        patientName: file.patientName,
+        patientId: file.patientId,
+        // Include all AI analysis fields
         aiSummary: file.aiSummary,
+        clinicalInsights: file.clinicalInsights,
+        extractedEntities: file.extractedEntities,
+        oasisScores: file.oasisScores
+          ? Object.fromEntries(file.oasisScores)
+          : {},
+        soapNote: file.soapNote,
+        careGoals: file.careGoals,
+        interventions: file.interventions,
+        riskFactors: file.riskFactors,
+        providerCommunication: file.providerCommunication,
+        skilledNeedJustification: file.skilledNeedJustification,
         createdAt: file.createdAt,
       },
     });

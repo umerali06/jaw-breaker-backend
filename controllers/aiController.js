@@ -99,6 +99,34 @@ export const analyzeFile = async (req, res) => {
       );
       console.log("Analysis completed successfully");
 
+      // Check if analysis contains error information
+      if (analysis.error && analysis.errorType === "QUOTA_EXCEEDED") {
+        console.log("API quota exceeded, marking file as failed");
+        file.processingStatus = "failed";
+        file.processingError =
+          "API quota exceeded. Please upgrade your Gemini API plan or try again tomorrow.";
+        await file.save();
+
+        return res.status(429).json({
+          success: false,
+          message:
+            "API quota exceeded. Please upgrade your Gemini API plan or try again tomorrow.",
+          errorType: "QUOTA_EXCEEDED",
+          retryAfter: "24 hours",
+        });
+      } else if (analysis.error) {
+        console.log("API error occurred, marking file as failed");
+        file.processingStatus = "failed";
+        file.processingError = analysis.summary || "AI analysis failed";
+        await file.save();
+
+        return res.status(500).json({
+          success: false,
+          message: analysis.summary || "AI analysis failed",
+          errorType: "API_ERROR",
+        });
+      }
+
       // Update the file with comprehensive analysis results
       file.aiSummary = analysis.summary;
 
@@ -149,7 +177,38 @@ export const analyzeFile = async (req, res) => {
 
       file.processingStatus = "completed";
       file.processingCompleted = new Date();
-      await file.save();
+
+      try {
+        await file.save();
+        console.log("File saved successfully with completed status");
+      } catch (saveError) {
+        console.error("Error saving file with completed status:", saveError);
+
+        // If there's a validation error but we have analysis data,
+        // still mark it as completed in the response
+        if (saveError.name === "ValidationError") {
+          console.log("Validation error occurred, but analysis was successful");
+          file.processingError = saveError.message;
+
+          // Try to save without the problematic fields
+          try {
+            if (saveError.message.includes("skilledNeedJustification")) {
+              console.log("Fixing skilledNeedJustification field");
+              if (typeof file.skilledNeedJustification === "object") {
+                file.skilledNeedJustification = JSON.stringify(
+                  file.skilledNeedJustification
+                );
+              }
+            }
+            await file.save();
+            console.log(
+              "File saved successfully after fixing validation issues"
+            );
+          } catch (secondSaveError) {
+            console.error("Still couldn't save file:", secondSaveError);
+          }
+        }
+      }
       console.log(
         "Analysis completed successfully for file:",
         file.originalname
@@ -498,10 +557,20 @@ export const generateCustomAnalysis = async (req, res) => {
         // Generate clinical insights using AI
         const { chatWithAI } = await import("../services/geminiService.js");
 
-        const insightsPrompt = `Analyze the following patient documentation and provide clinical insights in JSON format. Each insight should have: priority (critical/high/medium/low), type (risk/improvement/alert/recommendation/safety/medication/wound/nutrition), message, and evidence. Return as an array of insight objects:\n\n${text.substring(
-          0,
-          8000
-        )}`;
+        const insightsPrompt = `Analyze the following patient documentation and provide clinical insights in JSON format. 
+
+Each insight should have these fields:
+- priority: (critical/high/medium/low)
+- type: (risk/improvement/alert/recommendation/safety/medication/wound/nutrition)
+- message: A clear description of the insight, can use markdown formatting for emphasis
+- evidence: Supporting evidence from the document
+- recommendation: (optional) Suggested action or intervention
+
+Format the message field with proper markdown where appropriate (e.g., use **bold** for emphasis, lists with * for bullets, etc.)
+
+Return ONLY a valid JSON array of insight objects without any explanation text or code blocks:
+
+${text.substring(0, 8000)}`;
 
         const insightsResponse = await chatWithAI(
           insightsPrompt,
@@ -510,14 +579,38 @@ export const generateCustomAnalysis = async (req, res) => {
 
         // Try to parse the response as JSON, fallback to creating insights from text
         try {
-          result = JSON.parse(insightsResponse);
+          // Clean up the response to handle common JSON formatting issues
+          let cleanedResponse = insightsResponse.trim();
+
+          // If response starts with markdown code block, extract just the JSON
+          if (cleanedResponse.startsWith("```json")) {
+            cleanedResponse = cleanedResponse
+              .replace(/^```json\s*/, "")
+              .replace(/\s*```$/, "");
+          } else if (cleanedResponse.startsWith("```")) {
+            cleanedResponse = cleanedResponse
+              .replace(/^```\s*/, "")
+              .replace(/\s*```$/, "");
+          }
+
+          result = JSON.parse(cleanedResponse);
+
+          // Ensure each insight has proper formatting
+          result = result.map((insight) => ({
+            ...insight,
+            priority: insight.priority || "medium",
+            type: insight.type || "general",
+            message: insight.message || "No details provided",
+            evidence: insight.evidence || null,
+          }));
         } catch (parseError) {
+          console.error("Error parsing insights JSON:", parseError);
           // If parsing fails, create a basic insight structure
           result = [
             {
               priority: "medium",
               type: "recommendation",
-              message: insightsResponse,
+              message: insightsResponse.substring(0, 500),
               evidence: "AI analysis of patient documentation",
             },
           ];

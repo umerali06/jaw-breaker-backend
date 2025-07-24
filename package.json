@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "use:dev": "node switch-env.cjs dev",
+    "use:prod": "node switch-env.cjs prod"
   },
   "keywords": [
     "jawbreaker",

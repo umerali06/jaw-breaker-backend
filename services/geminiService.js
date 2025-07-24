@@ -584,15 +584,27 @@ ${text.substring(0, 8000)}`;
   } catch (error) {
     console.error("Error generating clinical analysis:", error);
 
+    // Check for specific error types
+    let errorMessage = "AI analysis service is currently unavailable";
+    if (error.message.includes("quota") || error.message.includes("429")) {
+      errorMessage =
+        "API quota exceeded. Please upgrade your Gemini API plan or try again tomorrow.";
+    } else if (error.message.includes("API_KEY_INVALID")) {
+      errorMessage =
+        "Invalid API key. Please check your Gemini API configuration.";
+    } else if (error.message.includes("PERMISSION_DENIED")) {
+      errorMessage =
+        "Permission denied. Please check your API key permissions.";
+    }
+
     // Return a fallback response if Gemini fails
     return {
-      summary:
-        "Clinical analysis is currently unavailable. Please check your Gemini API configuration.",
+      summary: `Clinical analysis failed: ${errorMessage}`,
       clinicalInsights: [
         {
           type: "alert",
-          message: "AI analysis service is currently unavailable",
-          priority: "medium",
+          message: errorMessage,
+          priority: "high",
         },
       ],
       extractedEntities: {
@@ -606,8 +618,11 @@ ${text.substring(0, 8000)}`;
       interventions: [],
       riskFactors: [],
       providerCommunication: [],
-      skilledNeedJustification:
-        "Manual review required - AI service unavailable",
+      skilledNeedJustification: `Manual review required - ${errorMessage}`,
+      error: true,
+      errorType: error.message.includes("quota")
+        ? "QUOTA_EXCEEDED"
+        : "API_ERROR",
     };
   }
 };
