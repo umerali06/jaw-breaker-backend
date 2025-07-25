@@ -54,6 +54,7 @@ const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:5174",
   "https://jaw-breaker-06.netlify.app",
+  "https://jawbreaker.help",
 ];
 
 // Add client URL to allowed origins if it's not already included
