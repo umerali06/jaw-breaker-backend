@@ -545,6 +545,14 @@ ${text.substring(0, 8000)}`;
       cleanedText = jsonMatch[0];
     }
 
+    // Additional JSON cleaning - fix common formatting issues
+    cleanedText = cleanedText
+      .replace(/,(\s*[}\]])/g, "$1") // Remove trailing commas
+      .replace(/([{,]\s*)(\w+):/g, '$1"$2":') // Quote unquoted keys
+      .replace(/:\s*'([^']*)'/g, ': "$1"') // Replace single quotes with double quotes
+      .replace(/\n/g, " ") // Remove newlines that might break JSON
+      .replace(/\s+/g, " "); // Normalize whitespace
+
     // Try to parse as JSON
     try {
       const analysisResult = JSON.parse(cleanedText);
@@ -553,7 +561,10 @@ ${text.substring(0, 8000)}`;
     } catch (parseError) {
       console.log("JSON parsing failed, creating structured response");
       console.error("Clinical Analysis JSON parsing failed:", parseError);
-      console.error("Original response:", responseText);
+      console.error(
+        "Original response:",
+        responseText.substring(0, 500) + "..."
+      );
       // If JSON parsing fails, create a structured response
       return {
         summary:
@@ -643,30 +654,69 @@ export const analyzeDocument = async (
     // Extract text from file
     const text = await extractTextFromFile(filePath, mimetype);
 
-    // Generate comprehensive analysis - using sequential calls instead of Promise.all to avoid rate limiting
-    // This can help prevent multiple simultaneous calls to the API which might cause failures
-    console.log("Generating SOAP note...");
-    const soapNote = await generateSOAPNote(text, patientContext);
+    // Generate comprehensive analysis with error resilience
+    // Each component can fail independently without breaking the entire analysis
+    let soapNote = null;
+    let clinicalAnalysis = null;
+    let oasisScores = null;
 
-    console.log("Generating clinical analysis...");
-    const clinicalAnalysis = await generateClinicalAnalysis(text);
+    // Try SOAP note generation
+    try {
+      console.log("Generating SOAP note...");
+      soapNote = await generateSOAPNote(text, patientContext);
+    } catch (error) {
+      console.error("Error generating SOAP note:", error);
+      soapNote = { error: "SOAP note generation failed", generated: false };
+    }
 
-    console.log("Generating OASIS scores...");
-    const oasisScores = await generateOASISScores(text);
+    // Try clinical analysis generation
+    try {
+      console.log("Generating clinical analysis...");
+      clinicalAnalysis = await generateClinicalAnalysis(text);
+    } catch (error) {
+      console.error("Error generating clinical analysis:", error);
+      clinicalAnalysis = {
+        summary:
+          "Clinical analysis failed: AI analysis service is currently unavailable. Please try again later.",
+        clinicalInsights: [],
+        extractedEntities: {},
+        careGoals: [],
+        interventions: [],
+        riskFactors: [],
+        providerCommunication: [],
+        skilledNeedJustification: {},
+        error: "Clinical analysis generation failed",
+      };
+    }
+
+    // Try OASIS scores generation
+    try {
+      console.log("Generating OASIS scores...");
+      oasisScores = await generateOASISScores(text);
+    } catch (error) {
+      console.error("Error generating OASIS scores:", error);
+      oasisScores = { error: "OASIS scores generation failed" };
+    }
 
     // Combine results into comprehensive analysis
     return {
       summary: clinicalAnalysis.summary,
-      clinicalInsights: clinicalAnalysis.clinicalInsights,
-      extractedEntities: clinicalAnalysis.extractedEntities,
-      careGoals: clinicalAnalysis.careGoals,
-      interventions: clinicalAnalysis.interventions,
-      riskFactors: clinicalAnalysis.riskFactors,
-      providerCommunication: clinicalAnalysis.providerCommunication,
-      skilledNeedJustification: clinicalAnalysis.skilledNeedJustification,
+      clinicalInsights: clinicalAnalysis.clinicalInsights || [],
+      extractedEntities: clinicalAnalysis.extractedEntities || {},
+      careGoals: clinicalAnalysis.careGoals || [],
+      interventions: clinicalAnalysis.interventions || [],
+      riskFactors: clinicalAnalysis.riskFactors || [],
+      providerCommunication: clinicalAnalysis.providerCommunication || [],
+      skilledNeedJustification: clinicalAnalysis.skilledNeedJustification || {},
       soapNote: soapNote,
       oasisScores: oasisScores,
       rawText: text.substring(0, 1000) + (text.length > 1000 ? "..." : ""),
+      processingStatus: "completed",
+      hasErrors: !!(
+        soapNote?.error ||
+        clinicalAnalysis?.error ||
+        oasisScores?.error
+      ),
     };
   } catch (error) {
     console.error("Error analyzing document:", error);
