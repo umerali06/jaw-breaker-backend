@@ -99,7 +99,7 @@ export const analyzeFile = async (req, res) => {
       );
       console.log("Analysis completed successfully");
 
-      // Check if analysis contains error information
+      // Check if analysis contains critical errors (complete failure)
       if (analysis.error && analysis.errorType === "QUOTA_EXCEEDED") {
         console.log("API quota exceeded, marking file as failed");
         file.processingStatus = "failed";
@@ -114,17 +114,13 @@ export const analyzeFile = async (req, res) => {
           errorType: "QUOTA_EXCEEDED",
           retryAfter: "24 hours",
         });
-      } else if (analysis.error) {
-        console.log("API error occurred, marking file as failed");
-        file.processingStatus = "failed";
-        file.processingError = analysis.summary || "AI analysis failed";
-        await file.save();
+      }
 
-        return res.status(500).json({
-          success: false,
-          message: analysis.summary || "AI analysis failed",
-          errorType: "API_ERROR",
-        });
+      // For partial errors, continue processing but log warnings
+      if (analysis.hasErrors) {
+        console.log(
+          "Analysis completed with some errors, but proceeding with available data"
+        );
       }
 
       // Update the file with comprehensive analysis results
