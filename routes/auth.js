@@ -7,6 +7,8 @@ import {
   getCurrentUser,
   googleAuthSuccess,
   googleAuthFailure,
+  requestPasswordReset,
+  resetPassword,
 } from "../controllers/authController.js";
 import {
   authenticateToken,
@@ -50,6 +52,10 @@ router.get(
 );
 
 router.get("/google/failure", googleAuthFailure);
+
+// Password reset routes
+router.post("/request-password-reset", requestPasswordReset);
+router.post("/reset-password", resetPassword);
 
 // Error handling middleware
 router.use(handleAuthError);

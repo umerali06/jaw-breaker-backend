@@ -1,4 +1,6 @@
 import File from "../models/File.js";
+import ChatSession from "../models/ChatSession.js";
+import PatientDataService from "../services/patientDataService.js";
 import {
   analyzeDocument,
   generateSOAPNote,
@@ -686,7 +688,7 @@ ${text.substring(0, 8000)}`;
  */
 export const chatWithAI = async (req, res) => {
   try {
-    const { message, patientId, context } = req.body;
+    const { message, patientId, context, sessionId } = req.body;
 
     if (!message) {
       return res.status(400).json({
@@ -698,18 +700,56 @@ export const chatWithAI = async (req, res) => {
     console.log("Chat request received:", {
       message,
       patientId,
+      sessionId,
       hasContext: !!context,
     });
+
+    // Find or create chat session for conversation saving
+    let chatSession = null;
+    if (patientId) {
+      try {
+        // Try to find existing active session
+        chatSession = await ChatSession.findActiveSession(
+          patientId,
+          req.userId
+        );
+
+        if (!chatSession) {
+          // Create new session
+          const patient = await PatientDataService.getPatient(
+            patientId,
+            req.userId
+          );
+          chatSession = await ChatSession.createSession({
+            patientId,
+            userId: req.userId,
+            patientName: patient.name,
+            documents: patient.documents || [],
+            latestSummary: context?.latestSummary,
+            documentContext: context?.documentContext || {},
+          });
+        }
+      } catch (error) {
+        console.log("Could not create/find chat session:", error.message);
+      }
+    }
 
     // Build enhanced context with NLP-ready structure
     let chatContext = {
       patientName: context?.patientName,
+      patientId: context?.patientId,
+      medicalRecordNumber: context?.medicalRecordNumber,
+      primaryDiagnosis: context?.primaryDiagnosis,
       recentDocuments: [],
       documentContent: [],
       latestSummary: context?.latestSummary || null,
       clinicalInsights: [],
       patientData: {},
       focusedDocument: context?.focusedDocument || null,
+      recentVisits: context?.recentVisits || [],
+      clinicalTimeline: context?.clinicalTimeline || [],
+      hasDocuments: false,
+      isManualEntry: !context?.documentContext && !context?.focusedDocument,
     };
 
     // Track if we're focusing on a specific document
@@ -861,10 +901,53 @@ export const chatWithAI = async (req, res) => {
     console.log("Sending chat request to AI service with enhanced context");
     const aiResponse = await aiChatService(message, chatContext);
 
+    // Save conversation to chat session
+    if (chatSession) {
+      try {
+        // Add user message
+        chatSession.addMessage({
+          type: "user",
+          content: message,
+          contextInfo: {
+            hasDocumentContent: chatContext.documentContent.length > 0,
+            focusedDocument: chatContext.focusedDocument,
+            insightsIncluded: chatContext.clinicalInsights.length,
+            hasOasisScores: !!chatContext.patientData.oasisScores,
+            hasSoapNote: !!chatContext.patientData.soapNote,
+          },
+        });
+
+        // Add AI response
+        chatSession.addMessage({
+          type: "ai",
+          content: aiResponse,
+          contextInfo: {
+            hasDocumentContent: chatContext.documentContent.length > 0,
+            focusedDocument: chatContext.focusedDocument,
+            insightsIncluded: chatContext.clinicalInsights.length,
+            hasOasisScores: !!chatContext.patientData.oasisScores,
+            hasSoapNote: !!chatContext.patientData.soapNote,
+          },
+        });
+
+        // Update context with latest information
+        chatSession.updateContext({
+          latestSummary: chatContext.latestSummary,
+          documentContext: context?.documentContext || {},
+        });
+
+        await chatSession.save();
+        console.log("Conversation saved to chat session");
+      } catch (error) {
+        console.log("Could not save conversation:", error.message);
+      }
+    }
+
     // Return the AI response with context metadata
     res.status(200).json({
       success: true,
       response: aiResponse,
+      sessionId: chatSession?.sessionId,
       context: {
         patientId,
         hasContext: !!context,
@@ -873,6 +956,7 @@ export const chatWithAI = async (req, res) => {
         hasDocumentContent: chatContext.documentContent.length > 0,
         hasOasisScores: !!chatContext.patientData.oasisScores,
         hasSoapNote: !!chatContext.patientData.soapNote,
+        isManualEntry: chatContext.isManualEntry,
         focusedDocument:
           specificFileRequested && chatContext.documentContent.length > 0
             ? chatContext.documentContent.find((doc) => doc.isFocused)?.fileId
@@ -884,6 +968,54 @@ export const chatWithAI = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error processing chat request",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Get conversation history for a patient
+ */
+export const getConversationHistory = async (req, res) => {
+  try {
+    const { patientId } = req.params;
+    const { limit = 5 } = req.query;
+
+    if (!patientId) {
+      return res.status(400).json({
+        success: false,
+        message: "Patient ID is required",
+      });
+    }
+
+    const conversations = await ChatSession.getConversationHistory(
+      patientId,
+      req.userId,
+      parseInt(limit)
+    );
+
+    res.json({
+      success: true,
+      conversations: conversations.map((session) => ({
+        sessionId: session.sessionId,
+        patientName: session.context.patientName,
+        messageCount: session.messages.length,
+        lastActivity: session.lastActivity,
+        createdAt: session.createdAt,
+        recentMessages: session.messages.slice(-3).map((msg) => ({
+          type: msg.type,
+          content:
+            msg.content.substring(0, 100) +
+            (msg.content.length > 100 ? "..." : ""),
+          timestamp: msg.timestamp,
+        })),
+      })),
+    });
+  } catch (error) {
+    console.error("Error getting conversation history:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error retrieving conversation history",
       error: error.message,
     });
   }
