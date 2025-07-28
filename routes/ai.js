@@ -4,6 +4,7 @@ import {
   getAnalysis,
   generateCustomAnalysis,
   chatWithAI,
+  getConversationHistory,
   testGeminiConnection,
 } from "../controllers/aiController.js";
 import { authenticateToken } from "../middleware/auth.js";
@@ -156,6 +157,9 @@ router.post("/regenerate/:fileId", analyzeFile);
 
 // Route for AI chat functionality
 router.post("/chat", chatWithAI);
+
+// Route to get conversation history for a patient
+router.get("/conversations/:patientId", getConversationHistory);
 
 // Test route to check Gemini AI connectivity
 router.get("/test", async (req, res) => {

@@ -129,6 +129,9 @@ export const getCurrentUser = async (req, res) => {
 export const googleAuthSuccess = async (req, res) => {
   try {
     console.log("Google OAuth success callback triggered");
+    console.log("Environment CLIENT_URL:", process.env.CLIENT_URL);
+    console.log("Environment NODE_ENV:", process.env.NODE_ENV);
+
     // User is attached by passport middleware
     const user = req.user;
     console.log("User from passport:", user ? user.email : "No user");
@@ -155,12 +158,21 @@ export const googleAuthSuccess = async (req, res) => {
     // Redirect to frontend with token
     const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
     const redirectUrl = `${clientUrl}/auth?token=${authResponse.token}`;
-    console.log("Redirecting to:", redirectUrl);
+    console.log("Final redirect URL:", redirectUrl);
 
-    res.redirect(redirectUrl);
+    // Add a small delay and more explicit redirect
+    res.writeHead(302, {
+      Location: redirectUrl,
+      "Cache-Control": "no-cache",
+    });
+    res.end();
   } catch (error) {
     console.error("Google auth success error:", error);
     const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+    console.log(
+      "Error redirect URL:",
+      `${clientUrl}/auth?error=authentication_failed`
+    );
     res.redirect(`${clientUrl}/auth?error=authentication_failed`);
   }
 };
@@ -171,4 +183,96 @@ export const googleAuthSuccess = async (req, res) => {
 export const googleAuthFailure = async (req, res) => {
   const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
   res.redirect(`${clientUrl}/auth?error=oauth_cancelled`);
+};
+
+/**
+ * Handle password reset request
+ */
+export const requestPasswordReset = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "MISSING_EMAIL",
+          message: "Email is required",
+        },
+      });
+    }
+
+    // Request password reset through AuthService
+    const result = await AuthService.requestPasswordReset(email);
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "RESET_REQUEST_FAILED",
+          message: result.error,
+        },
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Password reset email sent successfully",
+    });
+  } catch (error) {
+    console.error("Password reset request error:", error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: "INTERNAL_ERROR",
+        message: "Failed to process password reset request",
+      },
+    });
+  }
+};
+
+/**
+ * Handle password reset
+ */
+export const resetPassword = async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "MISSING_FIELDS",
+          message: "Reset token and new password are required",
+        },
+      });
+    }
+
+    // Reset password through AuthService
+    const result = await AuthService.resetPassword(token, newPassword);
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "RESET_FAILED",
+          message: result.error,
+        },
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Password reset successfully",
+    });
+  } catch (error) {
+    console.error("Password reset error:", error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: "INTERNAL_ERROR",
+        message: "Failed to reset password",
+      },
+    });
+  }
 };

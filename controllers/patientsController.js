@@ -1,4 +1,6 @@
 import Patient from "../models/Patient.js";
+import File from "../models/File.js";
+import PatientDataService from "../services/patientDataService.js";
 
 // Create a new patient (authenticated)
 export const createPatient = async (req, res) => {
@@ -36,7 +38,8 @@ export const createPatient = async (req, res) => {
 
     const patient = new Patient({
       ...req.body,
-      userId: req.userId,
+      userId: req.userId, // Keep for legacy compatibility
+      createdBy: req.userId, // Add for new format
     });
 
     await patient.save();
@@ -103,9 +106,17 @@ export const getPatientById = async (req, res) => {
   try {
     const { id } = req.params;
 
+    // Support both old and new user field formats
     const patient = await Patient.findOne({
       _id: id,
-      userId: req.userId,
+      $or: [
+        { userId: req.userId }, // Old format
+        { createdBy: req.userId }, // New format
+      ],
+    }).populate({
+      path: "documents",
+      select:
+        "filename originalname createdAt processingStatus mimetype analysis",
     });
 
     if (!patient) {
@@ -115,7 +126,11 @@ export const getPatientById = async (req, res) => {
       });
     }
 
-    res.json({ success: true, patient });
+    // Ensure documents field is always an array
+    const patientData = patient.toObject();
+    patientData.documents = patientData.documents || [];
+
+    res.json({ success: true, patient: patientData });
   } catch (error) {
     console.error("Error fetching patient:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -221,6 +236,280 @@ export const getPatientStats = async (req, res) => {
   }
 };
 
+// Search patients with medical record number lookup (authenticated)
+export const searchPatients = async (req, res) => {
+  try {
+    const { q: query } = req.query;
+
+    if (!query || query.trim().length < 2) {
+      return res.json({
+        success: true,
+        patients: [],
+        message: "Query too short",
+      });
+    }
+
+    // Use direct Patient model search to avoid encryption issues with existing data
+    const searchRegex = new RegExp(query.trim(), "i");
+
+    // Search in both old and new patient fields and populate documents
+    const patients = await Patient.find({
+      $and: [
+        {
+          $or: [
+            { userId: req.userId }, // Old format
+            { createdBy: req.userId }, // New format
+          ],
+        },
+        {
+          $or: [
+            { isActive: { $ne: false } }, // Include records where isActive is not false
+            { isActive: { $exists: false } }, // Include records where isActive doesn't exist (legacy)
+          ],
+        },
+        {
+          $or: [
+            { name: searchRegex },
+            { medicalRecordNumber: searchRegex },
+            { primaryDiagnosis: searchRegex },
+            { condition: searchRegex }, // Legacy field
+          ],
+        },
+      ],
+    })
+      .populate({
+        path: "documents",
+        select: "filename originalname createdAt processingStatus mimetype",
+      })
+      .sort({ updatedAt: -1 })
+      .limit(10);
+
+    res.json({
+      success: true,
+      patients: patients.map((patient) => ({
+        id: patient._id,
+        name: patient.name,
+        medicalRecordNumber: patient.medicalRecordNumber || "N/A",
+        primaryDiagnosis:
+          patient.primaryDiagnosis || patient.condition || "N/A",
+        age: patient.calculatedAge || patient.age || "N/A",
+        createdAt: patient.createdAt,
+        documents: patient.documents || [], // Include documents in search results
+        files: patient.documents || [], // Alias for compatibility
+      })),
+    });
+  } catch (error) {
+    console.error("Error searching patients:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Get patient summary for chat context (authenticated)
+export const getPatientSummary = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const summary = await PatientDataService.getPatientSummaryForChat(
+      id,
+      req.userId
+    );
+
+    res.json({
+      success: true,
+      summary,
+    });
+  } catch (error) {
+    console.error("Error getting patient summary:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Get clinical timeline for patient (authenticated)
+export const getClinicalTimeline = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const timeline = await PatientDataService.getClinicalTimeline(
+      id,
+      req.userId
+    );
+
+    res.json({
+      success: true,
+      timeline,
+    });
+  } catch (error) {
+    console.error("Error getting clinical timeline:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Get visit history for patient (authenticated)
+export const getVisitHistory = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { limit = 10 } = req.query;
+    const visits = await PatientDataService.getVisitHistory(
+      id,
+      req.userId,
+      parseInt(limit)
+    );
+
+    res.json({
+      success: true,
+      visits,
+    });
+  } catch (error) {
+    console.error("Error getting visit history:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Associate document with patient (authenticated)
+export const associateDocument = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { fileId } = req.body;
+
+    const result = await PatientDataService.addDocumentToPatient(
+      id,
+      fileId,
+      req.userId
+    );
+
+    res.json({
+      success: true,
+      message: result.message,
+    });
+  } catch (error) {
+    console.error("Error associating document:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Get patient documents (authenticated)
+export const getPatientDocuments = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const documents = await PatientDataService.getPatientDocuments(
+      id,
+      req.userId
+    );
+
+    res.json({
+      success: true,
+      documents,
+    });
+  } catch (error) {
+    console.error("Error getting patient documents:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Fix patient document associations (authenticated)
+export const fixPatientDocuments = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find the patient
+    const patient = await Patient.findOne({
+      _id: id,
+      $or: [
+        { userId: req.userId }, // Old format
+        { createdBy: req.userId }, // New format
+      ],
+    });
+
+    if (!patient) {
+      return res.status(404).json({
+        success: false,
+        message: "Patient not found",
+      });
+    }
+
+    // Find all potential documents for this patient
+    const potentialDocuments = [];
+
+    // Method 1: Find by patientId
+    const docsByPatientId = await File.find({
+      patientId: id,
+      $or: [{ userId: req.userId }, { userId: req.userId.toString() }],
+    });
+    potentialDocuments.push(...docsByPatientId);
+
+    // Method 2: Find by patientName
+    const docsByPatientName = await File.find({
+      patientName: patient.name,
+      $or: [{ userId: req.userId }, { userId: req.userId.toString() }],
+    });
+    potentialDocuments.push(...docsByPatientName);
+
+    // Remove duplicates
+    const uniqueDocuments = potentialDocuments.filter(
+      (doc, index, self) =>
+        index === self.findIndex((d) => d._id.toString() === doc._id.toString())
+    );
+
+    // Check which documents are actually new (not already in patient.documents array)
+    const existingDocumentIds = patient.documents.map((id) => id.toString());
+    const newDocuments = uniqueDocuments.filter(
+      (doc) => !existingDocumentIds.includes(doc._id.toString())
+    );
+
+    // Only update if there are new documents to add
+    if (newDocuments.length > 0) {
+      const newDocumentIds = newDocuments.map((doc) => doc._id);
+      patient.documents = [...patient.documents, ...newDocumentIds];
+      await patient.save();
+      console.log(
+        `Added ${newDocuments.length} new documents to patient ${patient.name}`
+      );
+    }
+
+    // Update each file's patient information (for all documents, not just new ones)
+    // This is just metadata cleanup and doesn't count as "fixing" associations
+    for (const doc of uniqueDocuments) {
+      let fileUpdated = false;
+
+      if (doc.patientId !== id) {
+        doc.patientId = id;
+        fileUpdated = true;
+      }
+
+      if (doc.patientName !== patient.name) {
+        doc.patientName = patient.name;
+        fileUpdated = true;
+      }
+
+      if (fileUpdated) {
+        await doc.save();
+      }
+    }
+
+    // Only count newly associated documents as "fixed"
+    const actuallyFixed = newDocuments.length;
+
+    res.json({
+      success: true,
+      message:
+        actuallyFixed > 0
+          ? `Fixed ${actuallyFixed} document association${
+              actuallyFixed > 1 ? "s" : ""
+            }`
+          : `All documents already properly associated`,
+      documentsFixed: actuallyFixed,
+      totalDocuments: uniqueDocuments.length,
+      alreadyAssociated: uniqueDocuments.length - actuallyFixed,
+      documents: uniqueDocuments.map((doc) => ({
+        id: doc._id,
+        originalname: doc.originalname,
+        createdAt: doc.createdAt,
+      })),
+    });
+  } catch (error) {
+    console.error("Error fixing patient documents:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 export default {
   createPatient,
   getAllPatients,
@@ -228,4 +517,11 @@ export default {
   updatePatient,
   deletePatient,
   getPatientStats,
+  searchPatients,
+  getPatientSummary,
+  getClinicalTimeline,
+  getVisitHistory,
+  associateDocument,
+  getPatientDocuments,
+  fixPatientDocuments,
 };

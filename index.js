@@ -25,6 +25,9 @@ console.log("GOOGLE_CALLBACK_URL:", process.env.GOOGLE_CALLBACK_URL);
 // Import passport and initialize it after env vars are loaded
 import passport, { initializePassport } from "./config/passport.js";
 
+// Email service will be imported lazily when needed
+console.log("📧 Email service will be initialized when first used...");
+
 // Initialize passport configuration
 initializePassport();
 

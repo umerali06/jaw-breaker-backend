@@ -1,5 +1,7 @@
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
 import User from "../models/User.js";
+import emailService from "./emailService.js";
 
 class AuthService {
   /**
@@ -210,6 +212,134 @@ class AuthService {
       return {
         success: false,
         error: error.message || "Google authentication failed",
+      };
+    }
+  }
+
+  /**
+   * Request password reset for user
+   * @param {string} email - User email
+   * @returns {Object} Password reset request result
+   */
+  static async requestPasswordReset(email) {
+    try {
+      // Find user by email
+      const user = await User.findByEmail(email);
+      if (!user) {
+        // Don't reveal if email exists or not for security
+        return {
+          success: true,
+          message: "If the email exists, a reset link has been sent",
+        };
+      }
+
+      // Check if user has a password (not Google OAuth only)
+      if (user.googleId && !user.password) {
+        return {
+          success: false,
+          error:
+            "This account uses Google sign-in. Please use Google to log in.",
+        };
+      }
+
+      // Generate reset token
+      const resetToken = crypto.randomBytes(32).toString("hex");
+      const resetTokenHash = crypto
+        .createHash("sha256")
+        .update(resetToken)
+        .digest("hex");
+
+      // Set reset token and expiration (1 hour)
+      user.resetPasswordToken = resetTokenHash;
+      user.resetPasswordExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+      await user.save();
+
+      // Send password reset email
+      const emailResult = await emailService.sendPasswordResetEmail(
+        email,
+        resetToken,
+        user.name
+      );
+
+      if (!emailResult.success) {
+        console.error(
+          "Failed to send password reset email:",
+          emailResult.error
+        );
+        // Don't reveal email sending failure to prevent email enumeration
+      }
+
+      // Log for development
+      if (process.env.NODE_ENV === "development") {
+        console.log("Password reset token for", email, ":", resetToken);
+        if (emailResult.previewUrl) {
+          console.log("Email preview URL:", emailResult.previewUrl);
+        }
+      }
+
+      return {
+        success: true,
+        message: "Password reset email sent successfully",
+        // In development, return the token for testing
+        ...(process.env.NODE_ENV === "development" && { resetToken }),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: "Failed to process password reset request",
+      };
+    }
+  }
+
+  /**
+   * Reset user password using reset token
+   * @param {string} resetToken - Password reset token
+   * @param {string} newPassword - New password
+   * @returns {Object} Password reset result
+   */
+  static async resetPassword(resetToken, newPassword) {
+    try {
+      // Hash the token to compare with stored hash
+      const resetTokenHash = crypto
+        .createHash("sha256")
+        .update(resetToken)
+        .digest("hex");
+
+      // Find user with valid reset token
+      const user = await User.findOne({
+        resetPasswordToken: resetTokenHash,
+        resetPasswordExpires: { $gt: new Date() },
+      });
+
+      if (!user) {
+        return {
+          success: false,
+          error: "Invalid or expired reset token",
+        };
+      }
+
+      // Validate new password
+      if (!newPassword || newPassword.length < 8) {
+        return {
+          success: false,
+          error: "Password must be at least 8 characters long",
+        };
+      }
+
+      // Update password and clear reset token
+      user.password = newPassword;
+      user.resetPasswordToken = null;
+      user.resetPasswordExpires = null;
+      await user.save();
+
+      return {
+        success: true,
+        message: "Password reset successfully",
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: "Failed to reset password",
       };
     }
   }

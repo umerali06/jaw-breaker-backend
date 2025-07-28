@@ -54,6 +54,14 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    resetPasswordToken: {
+      type: String,
+      default: null,
+    },
+    resetPasswordExpires: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true, // Automatically adds createdAt and updatedAt
@@ -63,6 +71,7 @@ const userSchema = new mongoose.Schema(
 // Index for faster queries
 userSchema.index({ email: 1 });
 userSchema.index({ googleId: 1 });
+userSchema.index({ resetPasswordToken: 1 });
 
 // Hash password before saving
 userSchema.pre("save", async function (next) {

@@ -8,6 +8,11 @@
     "start": "node index.js",
     "dev": "nodemon index.js",
     "test": "echo \"Error: no test specified\" && exit 1",
+    "test:password-reset": "node test-password-reset.js",
+    "test:email": "node test-email-only.js",
+    "test:real-email": "node test-real-email.js",
+    "test:env": "node test-env.js",
+    "test:env": "node test-env.js",
     "use:dev": "node switch-env.cjs dev",
     "use:prod": "node switch-env.cjs prod"
   },
@@ -29,6 +34,7 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^7.5.0",
     "multer": "^1.4.5-lts.1",
+    "nodemailer": "^7.0.5",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "pdf-parse": "^1.1.1"
