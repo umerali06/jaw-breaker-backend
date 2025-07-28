@@ -58,6 +58,7 @@ const allowedOrigins = [
   "http://localhost:5174",
   "https://jaw-breaker-06.netlify.app",
   "https://jawbreaker.help",
+  "https://www.jawbreaker.help", // Include www version
 ];
 
 // Add client URL to allowed origins if it's not already included
@@ -67,6 +68,7 @@ if (clientUrl && !allowedOrigins.includes(clientUrl)) {
 
 // Log CORS configuration
 console.log("CORS allowed origins:", allowedOrigins);
+console.log("CLIENT_URL from env:", clientUrl);
 
 app.use(
   cors({
@@ -75,10 +77,13 @@ app.use(
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
-        callback(new Error("Not allowed by CORS"));
+        console.error(`CORS blocked origin: ${origin}`);
+        callback(new Error(`Not allowed by CORS: ${origin}`));
       }
     },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   })
 );
 
