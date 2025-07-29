@@ -707,31 +707,70 @@ export const chatWithAI = async (req, res) => {
     // Find or create chat session for conversation saving
     let chatSession = null;
     if (patientId) {
+      console.log(
+        `🔍 Looking for chat session - Patient: ${patientId}, User: ${req.userId}`
+      );
       try {
         // Try to find existing active session
         chatSession = await ChatSession.findActiveSession(
           patientId,
           req.userId
         );
+        console.log(
+          `📋 Existing session found:`,
+          chatSession ? `Yes (${chatSession.messages.length} messages)` : "No"
+        );
 
         if (!chatSession) {
+          console.log(`🆕 Creating new chat session for patient ${patientId}`);
           // Create new session
           const patient = await PatientDataService.getPatient(
             patientId,
             req.userId
           );
+          console.log(`👤 Patient data retrieved:`, {
+            name: patient.name,
+            id: patient.id,
+            documentsCount: patient.documents?.length || 0,
+          });
+
+          // Convert document objects to strings for ChatSession
+          const documentStrings = (patient.documents || []).map((doc) => {
+            if (typeof doc === "string") return doc;
+            if (doc && typeof doc === "object") {
+              return (
+                doc.filename ||
+                doc.originalname ||
+                doc._id?.toString() ||
+                "unknown-document"
+              );
+            }
+            return String(doc);
+          });
+
+          console.log(
+            `📄 Converted ${documentStrings.length} documents to strings:`,
+            documentStrings
+          );
+
+          console.log(`🔄 Attempting to create chat session...`);
           chatSession = await ChatSession.createSession({
             patientId,
             userId: req.userId,
             patientName: patient.name,
-            documents: patient.documents || [],
+            documents: documentStrings,
             latestSummary: context?.latestSummary,
             documentContext: context?.documentContext || {},
           });
+          console.log(`✅ New chat session created:`, chatSession.sessionId);
         }
       } catch (error) {
-        console.log("Could not create/find chat session:", error.message);
+        console.error("❌ Could not create/find chat session:", error);
+        console.error("Error details:", error.message);
+        console.error("Stack trace:", error.stack);
       }
+    } else {
+      console.log(`⚠️  No patientId provided, skipping chat session creation`);
     }
 
     // Build enhanced context with NLP-ready structure
@@ -903,8 +942,12 @@ export const chatWithAI = async (req, res) => {
 
     // Save conversation to chat session
     if (chatSession) {
+      console.log(
+        `💾 Saving conversation to chat session: ${chatSession.sessionId}`
+      );
       try {
         // Add user message
+        console.log(`📝 Adding user message: "${message.substring(0, 50)}..."`);
         chatSession.addMessage({
           type: "user",
           content: message,
@@ -918,6 +961,9 @@ export const chatWithAI = async (req, res) => {
         });
 
         // Add AI response
+        console.log(
+          `🤖 Adding AI response: "${aiResponse.substring(0, 50)}..."`
+        );
         chatSession.addMessage({
           type: "ai",
           content: aiResponse,
@@ -936,11 +982,18 @@ export const chatWithAI = async (req, res) => {
           documentContext: context?.documentContext || {},
         });
 
+        console.log(
+          `💾 Saving chat session with ${chatSession.messages.length} messages`
+        );
         await chatSession.save();
-        console.log("Conversation saved to chat session");
+        console.log("✅ Conversation saved to chat session successfully");
       } catch (error) {
-        console.log("Could not save conversation:", error.message);
+        console.error("❌ Could not save conversation:", error);
+        console.error("Save error details:", error.message);
+        console.error("Save error stack:", error.stack);
       }
+    } else {
+      console.log("⚠️  No chat session available, conversation not saved");
     }
 
     // Return the AI response with context metadata
@@ -968,6 +1021,130 @@ export const chatWithAI = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error processing chat request",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Get current chat session messages for a patient
+ */
+export const getChatSession = async (req, res) => {
+  try {
+    const { patientId } = req.params;
+
+    if (!patientId) {
+      return res.status(400).json({
+        success: false,
+        message: "Patient ID is required",
+      });
+    }
+
+    console.log(
+      `Looking for active chat session - Patient: ${patientId}, User: ${req.userId}`
+    );
+
+    // Find the active chat session for this patient
+    const chatSession = await ChatSession.findActiveSession(
+      patientId,
+      req.userId
+    );
+
+    console.log(
+      `Active session found:`,
+      chatSession ? `Yes (${chatSession.messages.length} messages)` : "No"
+    );
+
+    if (!chatSession) {
+      // Check if there are any sessions for this patient/user (for debugging)
+      const allSessions = await ChatSession.find({
+        patientId,
+        userId: req.userId,
+      });
+      console.log(
+        `Total sessions for this patient/user: ${allSessions.length}`
+      );
+
+      if (allSessions.length > 0) {
+        console.log("Session details:");
+        allSessions.forEach((s, i) => {
+          console.log(
+            `  ${i + 1}. Active: ${s.isActive}, Messages: ${
+              s.messages.length
+            }, LastActivity: ${s.lastActivity}`
+          );
+        });
+      }
+
+      // Return empty messages if no session exists
+      return res.json({
+        success: true,
+        sessionId: null,
+        messages: [],
+        context: null,
+      });
+    }
+
+    // Return the full message history for the active session
+    res.json({
+      success: true,
+      sessionId: chatSession.sessionId,
+      messages: chatSession.messages.map((msg) => ({
+        id: msg.id,
+        type: msg.type,
+        content: msg.content,
+        timestamp: msg.timestamp,
+        contextInfo: msg.contextInfo || {},
+        contextNote: msg.contextNote || null,
+        isError: msg.isError || false,
+      })),
+      context: chatSession.context,
+      lastActivity: chatSession.lastActivity,
+    });
+  } catch (error) {
+    console.error("Error getting chat session:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error retrieving chat session",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Clear chat session for a patient
+ */
+export const clearChatSession = async (req, res) => {
+  try {
+    const { patientId } = req.params;
+
+    if (!patientId) {
+      return res.status(400).json({
+        success: false,
+        message: "Patient ID is required",
+      });
+    }
+
+    // Find and deactivate the current active session
+    const chatSession = await ChatSession.findActiveSession(
+      patientId,
+      req.userId
+    );
+
+    if (chatSession) {
+      chatSession.isActive = false;
+      await chatSession.save();
+    }
+
+    res.json({
+      success: true,
+      message: "Chat session cleared successfully",
+    });
+  } catch (error) {
+    console.error("Error clearing chat session:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error clearing chat session",
       error: error.message,
     });
   }

@@ -4,6 +4,8 @@ import {
   getAnalysis,
   generateCustomAnalysis,
   chatWithAI,
+  getChatSession,
+  clearChatSession,
   getConversationHistory,
   testGeminiConnection,
 } from "../controllers/aiController.js";
@@ -157,6 +159,12 @@ router.post("/regenerate/:fileId", analyzeFile);
 
 // Route for AI chat functionality
 router.post("/chat", chatWithAI);
+
+// Route to get current chat session for a patient
+router.get("/chat-session/:patientId", getChatSession);
+
+// Route to clear chat session for a patient
+router.delete("/chat-session/:patientId/clear", clearChatSession);
 
 // Route to get conversation history for a patient
 router.get("/conversations/:patientId", getConversationHistory);
