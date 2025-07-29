@@ -903,11 +903,37 @@ If the user provides vague or incomplete information, ask specific clarifying qu
     const prompt = `${systemPrompt}\n\nUSER QUERY: ${userPrompt}\n\nCONTEXT INFORMATION:${contextualInformation}\n\nPlease provide a comprehensive, clinically accurate response to the user's query based on the available context. Use markdown formatting (bold, italics, headings, lists) to make your response more readable and structured.`;
 
     console.log("Sending enhanced prompt to Gemini API");
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    console.log("Received response from Gemini API");
 
-    return response.text();
+    // Add retry logic for 503 errors (service overloaded)
+    let retries = 3;
+    let lastError;
+
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        console.log("Received response from Gemini API");
+        return response.text();
+      } catch (error) {
+        lastError = error;
+
+        // If it's a 503 error (service overloaded), retry with exponential backoff
+        if (error.status === 503 && attempt < retries) {
+          const delay = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
+          console.log(
+            `🔄 Gemini API overloaded (503), retrying in ${delay}ms... (attempt ${attempt}/${retries})`
+          );
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+
+        // For other errors or final retry, throw immediately
+        break;
+      }
+    }
+
+    console.error("Error in AI chat:", lastError);
+    throw lastError;
   } catch (error) {
     console.error("Error in AI chat:", error);
     throw error;

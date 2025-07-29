@@ -57,6 +57,14 @@ const chatSessionSchema = new mongoose.Schema(
             default: false,
           },
         },
+        contextNote: {
+          type: String,
+          default: null,
+        },
+        isError: {
+          type: Boolean,
+          default: false,
+        },
         metadata: {
           type: mongoose.Schema.Types.Mixed,
           default: {},
@@ -136,6 +144,8 @@ chatSessionSchema.methods.addMessage = function (messageData) {
     content: messageData.content,
     timestamp: new Date(),
     contextInfo: messageData.contextInfo || {},
+    contextNote: messageData.contextNote || null,
+    isError: messageData.isError || false,
     metadata: messageData.metadata || {},
   };
 
