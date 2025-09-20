@@ -13,6 +13,7 @@
 .env.development
 .env.test
 .env.production
+.env.backup
 node_modules
 .dist
 .build
