@@ -168,6 +168,44 @@ app.get("/health", (req, res) => {
   });
 });
 
+// 404 handler for API routes
+app.use("/api/*", (req, res) => {
+  res.status(404).json({
+    success: false,
+    error: "API endpoint not found",
+    path: req.originalUrl,
+    method: req.method,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Global error handler
+app.use((error, req, res, next) => {
+  console.error("Global error handler:", error);
+  
+  // Don't send error details in production
+  const isDevelopment = process.env.NODE_ENV === "development";
+  
+  res.status(error.status || 500).json({
+    success: false,
+    error: "Internal server error",
+    message: isDevelopment ? error.message : "Something went wrong",
+    ...(isDevelopment && { stack: error.stack }),
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Catch-all handler for non-API routes
+app.use("*", (req, res) => {
+  res.status(404).json({
+    success: false,
+    error: "Route not found",
+    path: req.originalUrl,
+    method: req.method,
+    timestamp: new Date().toISOString()
+  });
+});
+
 // MongoDB connection with improved error handling
 const connectDB = async () => {
   try {

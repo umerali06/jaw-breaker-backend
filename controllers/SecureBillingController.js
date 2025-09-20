@@ -744,19 +744,22 @@ class SecureBillingController {
       auditLog.errorType = error.constructor.name;
       await this.logAuditEvent(auditLog);
 
-      res.status(500).json({
-        success: false,
-        error: "Subscription processing failed",
-        details:
-          process.env.NODE_ENV === "development" ? error.message : undefined,
-        userFriendly: {
-          title: "Something Went Wrong",
-          message:
-            "We encountered an error processing your subscription. Please try again or contact support.",
-          errorId: this.generateErrorId(),
-          contactSupport: true,
-        },
-      });
+      // Ensure we always return JSON, never HTML
+      if (!res.headersSent) {
+        res.status(500).json({
+          success: false,
+          error: "Subscription processing failed",
+          details:
+            process.env.NODE_ENV === "development" ? error.message : undefined,
+          userFriendly: {
+            title: "Something Went Wrong",
+            message:
+              "We encountered an error processing your subscription. Please try again or contact support.",
+            errorId: this.generateErrorId(),
+            contactSupport: true,
+          },
+        });
+      }
     }
   }
 
