@@ -1,5 +1,6 @@
 import File from "../models/File.js";
 import fs from "fs";
+import azureOpenAIService from "../services/azureOpenAIService.js";
 
 // Controller for handling file uploads
 export const uploadFile = async (req, res) => {
@@ -8,6 +9,22 @@ export const uploadFile = async (req, res) => {
       return res
         .status(400)
         .json({ success: false, message: "No file uploaded" });
+    }
+
+    // Extract text content from the uploaded file
+    let extractedText = null;
+    let contentLength = 0;
+    
+    try {
+      console.log(`Extracting text from uploaded file: ${req.file.originalname}`);
+      extractedText = await azureOpenAIService.extractTextFromFile(req.file.path, req.file.mimetype);
+      contentLength = extractedText ? extractedText.length : 0;
+      console.log(`Successfully extracted ${contentLength} characters from ${req.file.originalname}`);
+    } catch (extractError) {
+      console.error(`Failed to extract text from ${req.file.originalname}:`, extractError.message);
+      // Continue with upload even if text extraction fails
+      extractedText = null;
+      contentLength = 0;
     }
 
     // Create a new file record in the database
@@ -20,6 +37,8 @@ export const uploadFile = async (req, res) => {
       userId: req.userId, // From authentication middleware
       patientName: req.body.patientName || null,
       patientId: req.body.patientId || null,
+      extractedText: extractedText,
+      contentLength: contentLength,
     });
 
     await newFile.save();
@@ -28,14 +47,13 @@ export const uploadFile = async (req, res) => {
     const shouldAutoAnalyze =
       req.body.analyze === "true" || req.body.analyze === true;
 
-    if (shouldAutoAnalyze) {
+    if (shouldAutoAnalyze && extractedText && contentLength > 0) {
       // Start analysis asynchronously
       console.log(`Starting auto-analysis for file: ${newFile.originalname}`);
 
       // Update status to processing
       newFile.processingStatus = "processing";
       newFile.processingStarted = new Date();
-      await newFile.save();
 
       // Start analysis in background without blocking the response
       setImmediate(async () => {
@@ -53,43 +71,11 @@ export const uploadFile = async (req, res) => {
           const analysisRes = {
             status: (code) => ({
               json: async (data) => {
-                console.log(
-                  `Analysis completed for ${newFile.originalname}:`,
-                  data.success ? "Success" : "Failed"
-                );
-
-                if (!data.success) {
-                  console.error("Analysis error:", data.error);
-
-                  // Update file status to failed
-                  try {
-                    const failedFile = await File.findById(newFile._id);
-                    if (failedFile) {
-                      failedFile.processingStatus = "failed";
-                      failedFile.processingError =
-                        data.error || "Auto-analysis failed";
-                      failedFile.processingCompleted = new Date();
-                      await failedFile.save();
-                      console.log(
-                        `File ${newFile.originalname} marked as failed`
-                      );
-                    }
-                  } catch (updateError) {
-                    console.error(
-                      "Error updating failed file status:",
-                      updateError
-                    );
-                  }
-                } else {
-                  console.log(
-                    `File ${newFile.originalname} analysis completed successfully`
-                  );
-                }
-              },
+                console.log(`Analysis response for ${newFile.originalname}:`, data);
+              }
             }),
           };
 
-          // Call the analysis function
           await aiController.analyzeFile(analysisReq, analysisRes);
         } catch (error) {
           console.error(`Auto-analysis failed for file ${newFile._id}:`, error);
@@ -112,6 +98,13 @@ export const uploadFile = async (req, res) => {
           }
         }
       });
+    } else if (shouldAutoAnalyze && (!extractedText || contentLength === 0)) {
+      // Mark as failed if text extraction failed but analysis was requested
+      newFile.processingStatus = "failed";
+      newFile.processingError = "Text extraction failed - no content available for analysis";
+      newFile.processingCompleted = new Date();
+      await newFile.save();
+      console.log(`File ${newFile.originalname} marked as failed due to text extraction failure`);
     }
 
     // Return success response
@@ -125,6 +118,7 @@ export const uploadFile = async (req, res) => {
         mimetype: newFile.mimetype,
         size: newFile.size,
         processingStatus: newFile.processingStatus,
+        contentLength: newFile.contentLength,
         createdAt: newFile.createdAt,
       },
     });

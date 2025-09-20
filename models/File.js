@@ -60,6 +60,16 @@ const fileSchema = new mongoose.Schema({
     type: Boolean,
     default: true,
   },
+  // Add fields for storing extracted content
+  extractedText: {
+    type: String,
+    default: null,
+  },
+  contentLength: {
+    type: Number,
+    default: 0,
+  },
+  // AI analysis results
   aiSummary: {
     type: Object,
     default: null,

@@ -1,0 +1,64 @@
+CLINICAL PROGRESS NOTE
+
+Patient: Ahmad Hassan
+MRN: 123456
+Date: January 20, 2025
+Provider: Dr. Sarah Johnson, MD
+
+CHIEF COMPLAINT:
+Chest pain and shortness of breath
+
+HISTORY OF PRESENT ILLNESS:
+65-year-old male with a history of hypertension and diabetes presents to the emergency department with acute onset chest pain that started 3 hours ago. Pain is described as pressure-like, 7/10 intensity, radiating to left arm. Associated with diaphoresis, nausea, and mild shortness of breath. Patient denies any recent trauma or exertion.
+
+PAST MEDICAL HISTORY:
+- Hypertension (diagnosed 2018)
+- Type 2 Diabetes Mellitus (diagnosed 2020)
+- Hyperlipidemia
+- No known drug allergies
+
+MEDICATIONS:
+- Lisinopril 10mg daily
+- Metformin 1000mg twice daily
+- Atorvastatin 20mg daily
+- Aspirin 81mg daily
+
+PHYSICAL EXAMINATION:
+Vital Signs:
+- Blood Pressure: 165/95 mmHg
+- Heart Rate: 88 bpm
+- Temperature: 98.4°F
+- Respiratory Rate: 20 breaths/min
+- Oxygen Saturation: 96% on room air
+
+General: Alert, oriented x3, appears anxious but in no acute distress
+Cardiovascular: Regular rate and rhythm, no murmurs, rubs, or gallops
+Respiratory: Clear to auscultation bilaterally, no wheezing or rales
+Extremities: No edema, pulses intact, no signs of DVT
+
+ASSESSMENT AND PLAN:
+1. Acute chest pain - rule out myocardial infarction
+   - EKG shows no acute ST changes
+   - Cardiac enzymes pending
+   - Continue monitoring
+
+2. Hypertension - elevated blood pressure
+   - Continue current antihypertensive regimen
+   - Consider dose adjustment if BP remains elevated
+
+3. Type 2 Diabetes Mellitus - well controlled
+   - Continue current medication regimen
+   - Monitor blood glucose
+
+PLAN:
+- EKG and cardiac enzymes
+- Chest X-ray
+- Aspirin 325mg loading dose
+- Cardiology consultation
+- Discharge planning pending test results
+- Follow-up in 1 week
+
+Patient counseled on signs and symptoms of heart attack and when to seek immediate medical attention.
+
+Dr. Sarah Johnson, MD
+Emergency Medicine

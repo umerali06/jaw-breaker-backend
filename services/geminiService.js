@@ -2,20 +2,29 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import dotenv from "dotenv";
 import fs from "fs";
 import pdfParse from "pdf-parse";
+import { fileURLToPath } from "url";
+import azureOpenAIService from "./azureOpenAIService.js";
+import { dirname, join } from "path";
 
-dotenv.config();
+// Get the directory of the current module
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Load environment variables from the server directory
+dotenv.config({ path: join(__dirname, "../.env") });
 
 // Initialize Gemini AI with improved error handling
 const apiKey = process.env.GEMINI_API_KEY;
 if (!apiKey) {
-  console.error("GEMINI_API_KEY is not set in environment variables");
-  throw new Error("Gemini API key is required");
+  console.warn("GEMINI_API_KEY is not set in environment variables - Gemini AI will be disabled");
+  console.warn("To enable Gemini AI, set GEMINI_API_KEY in your environment variables");
+  // Continue without throwing error - the service will fail gracefully when called
 }
 
 // Log partial API key for debugging (first 10 chars only)
 console.log(
   "Initializing Gemini AI with API key:",
-  apiKey.substring(0, 10) + "..."
+  apiKey ? apiKey.substring(0, 10) + "..." : "Not configured"
 );
 
 // Add a warning about using only the flash model
@@ -27,12 +36,12 @@ console.log(
 const MODELS = {
   FLASH: "gemini-1.5-flash",
   PRO: "gemini-1.5-flash", // Changed from gemini-1.5-pro to gemini-1.5-flash as a temporary fix
-  FALLBACK: "gemini-pro", // Legacy fallback model
+  FALLBACK: "gemini-1.5-flash", // Use flash model as fallback too
 };
 
 // Create Gemini client
 // Create Gemini client
-const genAI = new GoogleGenerativeAI(apiKey);
+const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
 
 /**
  * Get a generative model with fallback options
@@ -40,6 +49,10 @@ const genAI = new GoogleGenerativeAI(apiKey);
  * @returns {Object} - The generative model
  */
 const getModelWithFallback = (preferredModel) => {
+  if (!genAI) {
+    throw new Error("Gemini AI is not configured - no API key provided");
+  }
+  
   try {
     return genAI.getGenerativeModel({ model: preferredModel });
   } catch (error) {
@@ -74,9 +87,19 @@ export const extractTextFromFile = async (filePath, mimetype) => {
   try {
     if (mimetype === "application/pdf") {
       // Extract text from PDF
+      try {
       const dataBuffer = fs.readFileSync(filePath);
       const data = await pdfParse(dataBuffer);
+        
+        if (!data.text || data.text.trim().length === 0) {
+          throw new Error("PDF appears to be empty or contains no extractable text");
+        }
+        
       return data.text;
+      } catch (pdfError) {
+        console.error("PDF parsing error:", pdfError);
+        throw new Error(`PDF processing failed: ${pdfError.message}. The file may be corrupted, password-protected, or contain only images.`);
+      }
     } else if (
       mimetype === "application/msword" ||
       mimetype ===
@@ -87,9 +110,18 @@ export const extractTextFromFile = async (filePath, mimetype) => {
       return "DOCX parsing not implemented yet. Please use PDF or TXT files.";
     } else if (mimetype === "text/plain") {
       // Read text file directly
-      return fs.readFileSync(filePath, "utf8");
+      try {
+        const text = fs.readFileSync(filePath, "utf8");
+        if (!text || text.trim().length === 0) {
+          throw new Error("Text file appears to be empty");
+        }
+        return text;
+      } catch (textError) {
+        console.error("Text file reading error:", textError);
+        throw new Error(`Text file processing failed: ${textError.message}`);
+      }
     } else {
-      throw new Error(`Unsupported file type: ${mimetype}`);
+      throw new Error(`Unsupported file type: ${mimetype}. Please use PDF, DOCX, or TXT files.`);
     }
   } catch (error) {
     console.error("Error extracting text from file:", error);
@@ -105,6 +137,49 @@ export const extractTextFromFile = async (filePath, mimetype) => {
  */
 export const generateSOAPNote = async (text, patientContext = {}) => {
   try {
+    // Try Azure OpenAI first (primary)
+    try {
+      console.log("🚀 [SOAP Note] Using Azure OpenAI as primary service...");
+      const azureResponse = await azureOpenAIService.chatWithAI(
+        `Generate a comprehensive, evidence-based SOAP note based on the following clinical documentation. Ensure clinical accuracy, regulatory compliance, and professional standards:\n\n${text}`,
+        {
+          ...patientContext,
+          systemPrompt: `You are an advanced clinical documentation specialist with expertise in nursing care, evidence-based practice, and regulatory compliance.
+
+CLINICAL EXPERTISE:
+- Advanced knowledge of nursing care documentation and SOAP note standards
+- Expertise in evidence-based practice and clinical decision support
+- Understanding of CMS guidelines, regulatory requirements, and quality standards
+- Knowledge of interdisciplinary care coordination and team-based approaches
+
+SOAP NOTE REQUIREMENTS:
+- Use precise clinical terminology and professional language
+- Follow structured SOAP format with clear sections
+- Include specific clinical findings and assessments
+- Provide evidence-based interventions and care plans
+- Consider patient-specific factors and care context
+- Align with current clinical guidelines and best practices
+
+QUALITY STANDARDS:
+- Ensure accuracy and clinical relevance
+- Maintain consistency with evidence-based practice
+- Focus on patient safety and quality outcomes
+- Align with regulatory and accreditation standards
+- Use clear, actionable clinical language`
+        }
+      );
+      console.log("✅ [SOAP Note] Azure OpenAI response successful");
+      return {
+        success: true,
+        soapNote: azureResponse,
+        model: "gpt-5-chat",
+        provider: "azure-openai"
+      };
+    } catch (azureError) {
+      console.warn("⚠️ [SOAP Note] Azure OpenAI failed, falling back to Gemini:", azureError.message);
+    }
+
+    // Fallback to Gemini
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     const systemPrompt = `You are an expert clinical documentation specialist with advanced training in home health and skilled nursing documentation. Generate comprehensive, CMS-compliant, legally defensible SOAP notes.
@@ -291,7 +366,48 @@ export const generateOASISScores = async (
   ]
 ) => {
   try {
-    // Changed from gemini-1.5-pro to gemini-1.5-flash since that model is working
+    // Try Azure OpenAI first (primary)
+    try {
+      console.log("🚀 [OASIS Scores] Using Azure OpenAI as primary service...");
+      const azureResponse = await azureOpenAIService.chatWithAI(
+        `Generate accurate, evidence-based OASIS scores based on the following clinical documentation. Ensure regulatory compliance and clinical accuracy:\n\n${text}`,
+        {
+          items,
+          systemPrompt: `You are an advanced OASIS specialist with expertise in CMS home health regulations, quality measures, and clinical assessment.
+
+CLINICAL EXPERTISE:
+- Advanced knowledge of OASIS assessment and scoring criteria
+- Expertise in CMS guidelines, regulatory requirements, and quality standards
+- Understanding of home health care delivery and patient outcomes
+- Knowledge of evidence-based practice and clinical decision support
+
+OASIS SCORING REQUIREMENTS:
+- Provide accurate, defensible OASIS scores based on clinical documentation
+- Include detailed rationale for each score with specific clinical indicators
+- Consider patient-specific factors and care context
+- Align with current CMS guidelines and regulatory standards
+- Focus on measurable outcomes and quality indicators
+
+QUALITY STANDARDS:
+- Ensure accuracy and clinical relevance
+- Maintain consistency with evidence-based practice
+- Focus on patient safety and quality outcomes
+- Align with regulatory and accreditation standards
+- Use clear, actionable clinical language`
+        }
+      );
+      console.log("✅ [OASIS Scores] Azure OpenAI response successful");
+      return {
+        success: true,
+        scores: azureResponse,
+        model: "gpt-5-chat",
+        provider: "azure-openai"
+      };
+    } catch (azureError) {
+      console.warn("⚠️ [OASIS Scores] Azure OpenAI failed, falling back to Gemini:", azureError.message);
+    }
+
+    // Fallback to Gemini
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     const systemPrompt = `You are a certified OASIS specialist with extensive experience in CMS home health regulations. Provide accurate, defensible OASIS scores based on clinical documentation.
@@ -405,8 +521,12 @@ ${text.substring(0, 8000)}`;
  * @returns {Promise<Object>} - Clinical insights and recommendations
  */
 export const generateClinicalAnalysis = async (text) => {
+  const maxRetries = 3;
+  let lastError;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
   try {
-    console.log("Starting enhanced clinical analysis...");
+      console.log(`Starting enhanced clinical analysis (attempt ${attempt}/${maxRetries})...`);
     // Changed from gemini-1.5-pro to gemini-1.5-flash since that model is working
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
@@ -521,7 +641,14 @@ ${text.substring(0, 8000)}`;
 
     const prompt = `${systemPrompt}\n\n${userPrompt}\n\nIMPORTANT: Respond ONLY with valid JSON in the exact format specified above.`;
 
-    const result = await model.generateContent(prompt);
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("Analysis timed out after 60 seconds")), 60000);
+      });
+
+      const analysisPromise = model.generateContent(prompt);
+      
+      const result = await Promise.race([analysisPromise, timeoutPromise]);
     const response = await result.response;
     const responseText = response.text();
 
@@ -537,12 +664,6 @@ ${text.substring(0, 8000)}`;
         .replace(/```\s*$/, "");
     } else if (cleanedText.startsWith("```")) {
       cleanedText = cleanedText.replace(/```\s*/, "").replace(/```\s*$/, "");
-    }
-
-    // Try to find JSON object in the response
-    const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      cleanedText = jsonMatch[0];
     }
 
     // Additional JSON cleaning - fix common formatting issues
@@ -593,30 +714,59 @@ ${text.substring(0, 8000)}`;
       };
     }
   } catch (error) {
-    console.error("Error generating clinical analysis:", error);
+      lastError = error;
+      console.error(`Clinical analysis attempt ${attempt} failed:`, error);
 
-    // Check for specific error types
-    let errorMessage = "AI analysis service is currently unavailable";
-    if (error.message.includes("quota") || error.message.includes("429")) {
-      errorMessage =
-        "API quota exceeded. Please upgrade your Gemini API plan or try again tomorrow.";
-    } else if (error.message.includes("API_KEY_INVALID")) {
-      errorMessage =
-        "Invalid API key. Please check your Gemini API configuration.";
-    } else if (error.message.includes("PERMISSION_DENIED")) {
-      errorMessage =
-        "Permission denied. Please check your API key permissions.";
+      // If this is the last attempt, throw the error
+      if (attempt === maxRetries) {
+        break;
+      }
+
+      // Wait before retrying (exponential backoff)
+      const delay = Math.pow(2, attempt) * 1000;
+      console.log(`Retrying in ${delay}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
+  }
 
-    // Return a fallback response if Gemini fails
+  // If we get here, all retries failed
+  console.error("All clinical analysis attempts failed:", lastError);
+
+  // Check for specific error types and provide better error messages
+  let errorMessage = "Document analysis encountered an issue";
+  let errorType = "ANALYSIS_ERROR";
+  
+  if (lastError.message.includes("quota") || lastError.message.includes("429")) {
+    errorMessage = "API quota exceeded. Please try again tomorrow or upgrade your plan.";
+    errorType = "QUOTA_EXCEEDED";
+  } else if (lastError.message.includes("API_KEY_INVALID")) {
+    errorMessage = "API configuration issue. Please contact support.";
+    errorType = "API_CONFIG_ERROR";
+  } else if (lastError.message.includes("PERMISSION_DENIED")) {
+    errorMessage = "API access denied. Please contact support.";
+    errorType = "API_ACCESS_ERROR";
+  } else if (lastError.message.includes("timeout") || lastError.message.includes("TIMEOUT")) {
+    errorMessage = "Analysis timed out. Please try again with a smaller document.";
+    errorType = "TIMEOUT_ERROR";
+  } else if (lastError.message.includes("network") || lastError.message.includes("fetch")) {
+    errorMessage = "Network connection issue. Please check your internet and try again.";
+    errorType = "NETWORK_ERROR";
+  } else if (lastError.message.includes("model") || lastError.message.includes("MODEL")) {
+    errorMessage = "AI model temporarily unavailable. Please try again in a few minutes.";
+    errorType = "MODEL_ERROR";
+  }
+
+  // Return a more helpful fallback response
     return {
-      summary: `Clinical analysis failed: ${errorMessage}`,
+    summary: `Clinical analysis could not be completed: ${errorMessage}. Please try again or contact support if the issue persists.`,
       clinicalInsights: [
         {
           type: "alert",
           message: errorMessage,
           priority: "high",
-        },
+        category: "error",
+        evidence: "Analysis service error"
+      }
       ],
       extractedEntities: {
         medications: [],
@@ -631,11 +781,9 @@ ${text.substring(0, 8000)}`;
       providerCommunication: [],
       skilledNeedJustification: `Manual review required - ${errorMessage}`,
       error: true,
-      errorType: error.message.includes("quota")
-        ? "QUOTA_EXCEEDED"
-        : "API_ERROR",
+    errorType: errorType,
+    retryable: errorType !== "QUOTA_EXCEEDED" && errorType !== "API_CONFIG_ERROR"
     };
-  }
 };
 
 /**
@@ -651,41 +799,90 @@ export const analyzeDocument = async (
   patientContext = {}
 ) => {
   try {
-    // Extract text from file
-    const text = await extractTextFromFile(filePath, mimetype);
+    console.log("🔍 [Gemini Service] Starting analysis with Azure OpenAI...");
+    
+    // Use Azure OpenAI for document analysis
+    const analysis = await azureOpenAIService.analyzeDocument(filePath, mimetype, {
+      patientId: patientContext.patientId,
+      documentType: patientContext.documentType || 'Clinical Document',
+      patientContext: patientContext
+    });
 
-    // Generate comprehensive analysis with error resilience
-    // Each component can fail independently without breaking the entire analysis
-    let soapNote = null;
-    let clinicalAnalysis = null;
-    let oasisScores = null;
-
-    // Try SOAP note generation
-    try {
-      console.log("Generating SOAP note...");
-      soapNote = await generateSOAPNote(text, patientContext);
-    } catch (error) {
-      console.error("Error generating SOAP note:", error);
-      soapNote = { error: "SOAP note generation failed", generated: false };
-    }
-
-    // Try clinical analysis generation
-    try {
-      console.log("Generating clinical analysis...");
-      clinicalAnalysis = await generateClinicalAnalysis(text);
-    } catch (error) {
-      console.error("Error generating clinical analysis:", error);
-      clinicalAnalysis = {
-        summary:
-          "Clinical analysis failed: AI analysis service is currently unavailable. Please try again later.",
-        clinicalInsights: [],
-        extractedEntities: {},
+    if (analysis.success) {
+      console.log("✅ [Gemini Service] Azure OpenAI analysis completed successfully");
+      return {
+        summary: analysis.analysis,
+        clinicalInsights: analysis.insights,
+        extractedEntities: [],
         careGoals: [],
         interventions: [],
         riskFactors: [],
         providerCommunication: [],
-        skilledNeedJustification: {},
+        skilledNeedJustification: [],
+        soapNote: "",
+        oasisScores: {},
+        rawText: analysis.extractedText,
+        qualityScore: analysis.qualityScore,
+        provider: analysis.provider,
+        timestamp: analysis.timestamp
+      };
+    } else {
+      throw new Error(analysis.error || 'Azure OpenAI analysis failed');
+    }
+  } catch (error) {
+    console.error("❌ [Gemini Service] Azure OpenAI failed, falling back to Gemini analysis:", error.message);
+    
+    // Fallback to Gemini analysis if Azure OpenAI fails
+    try {
+      // Extract text from file
+      const text = await extractTextFromFile(filePath, mimetype);
+
+      // Generate comprehensive analysis with error resilience
+      // Each component can fail independently without breaking the entire analysis
+      let soapNote = null;
+      let clinicalAnalysis = null;
+      let oasisScores = null;
+
+      // Try SOAP note generation
+      try {
+        console.log("Generating SOAP note...");
+        soapNote = await generateSOAPNote(text, patientContext);
+      } catch (error) {
+        console.error("Error generating SOAP note:", error);
+        soapNote = { error: "SOAP note generation failed", generated: false };
+      }
+
+      // Try clinical analysis generation
+      try {
+        console.log("Generating clinical analysis...");
+        clinicalAnalysis = await generateClinicalAnalysis(text);
+    } catch (error) {
+      console.error("Error generating clinical analysis:", error);
+      clinicalAnalysis = {
+        summary:
+          "Clinical analysis could not be completed due to a processing error. Please try again or contact support if the issue persists.",
+        clinicalInsights: [
+          {
+            type: "alert",
+            message: "Analysis processing failed",
+            priority: "high",
+            category: "error"
+          }
+        ],
+        extractedEntities: {
+          medications: [],
+          conditions: [],
+          procedures: [],
+          vitals: {},
+          allergies: [],
+        },
+        careGoals: [],
+        interventions: [],
+        riskFactors: [],
+        providerCommunication: [],
+        skilledNeedJustification: "Manual review required - analysis processing failed",
         error: "Clinical analysis generation failed",
+        errorType: "PROCESSING_ERROR"
       };
     }
 
@@ -711,16 +908,19 @@ export const analyzeDocument = async (
       soapNote: soapNote,
       oasisScores: oasisScores,
       rawText: text.substring(0, 1000) + (text.length > 1000 ? "..." : ""),
-      processingStatus: "completed",
-      hasErrors: !!(
-        soapNote?.error ||
-        clinicalAnalysis?.error ||
-        oasisScores?.error
-      ),
-    };
-  } catch (error) {
-    console.error("Error analyzing document:", error);
-    throw error;
+        processingStatus: "completed",
+        hasErrors: !!(
+          soapNote?.error ||
+          clinicalAnalysis?.error ||
+          oasisScores?.error
+        ),
+        provider: 'Gemini AI',
+        fallback: true
+      };
+    } catch (fallbackError) {
+      console.error("❌ [Gemini Service] Both Azure OpenAI and Gemini fallback failed:", fallbackError.message);
+      throw fallbackError;
+    }
   }
 };
 
@@ -732,7 +932,20 @@ export const analyzeDocument = async (
  */
 export const chatWithAI = async (message, context = {}) => {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    console.log("💬 [Gemini Service] Starting chat with Azure OpenAI...");
+    
+    // Use Azure OpenAI for chat
+    const response = await azureOpenAIService.chatWithAI(message, context);
+    
+    console.log("✅ [Gemini Service] Azure OpenAI chat completed successfully");
+    return response;
+    
+  } catch (error) {
+    console.error("❌ [Gemini Service] Azure OpenAI failed, falling back to Gemini chat:", error.message);
+    
+    // Fallback to Gemini chat if Azure OpenAI fails
+    try {
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     const systemPrompt = `You are an advanced clinical documentation assistant with expertise in:
 - OASIS (Outcome and Assessment Information Set) scoring and analysis
@@ -932,11 +1145,12 @@ If the user provides vague or incomplete information, ask specific clarifying qu
       }
     }
 
-    console.error("Error in AI chat:", lastError);
-    throw lastError;
-  } catch (error) {
-    console.error("Error in AI chat:", error);
-    throw error;
+      console.log("✅ [Gemini Service] Gemini fallback successful");
+      return response.text();
+    } catch (fallbackError) {
+      console.error("❌ [Gemini Service] Both Azure OpenAI and Gemini fallback failed:", fallbackError.message);
+      throw fallbackError;
+    }
   }
 };
 
@@ -947,6 +1161,16 @@ If the user provides vague or incomplete information, ask specific clarifying qu
 export const testConnection = async () => {
   try {
     console.log("Testing Gemini API connection...");
+    
+    // Check if API key is available
+    if (!genAI) {
+      console.log("Gemini AI not configured - no API key provided");
+      return { 
+        success: false, 
+        error: "Gemini AI not configured - no API key provided",
+        status: "disabled"
+      };
+    }
 
     // Test with gemini-1.5-flash model
     console.log("Testing gemini-1.5-flash model");
@@ -966,7 +1190,34 @@ export const testConnection = async () => {
     }; // Return full response with model info
   } catch (error) {
     console.error("Gemini test error:", error);
-    return { success: false, error: error.message, stack: error.stack };
+    return { 
+      success: false, 
+      error: error.message, 
+      stack: error.stack,
+      status: "error"
+    };
+  }
+};
+
+/**
+ * Generate content using Gemini AI (for compatibility with NursingAIService)
+ * @param {string} prompt - The prompt to send to Gemini
+ * @param {Object} options - Generation options
+ * @returns {Promise<string>} - Generated content
+ */
+export const generateContent = async (prompt, options = {}) => {
+  try {
+    if (!genAI) {
+      throw new Error("Gemini AI is not configured - no API key provided");
+    }
+    
+    const model = getModelWithFallback(options.model || MODELS.FLASH);
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    return response.text();
+  } catch (error) {
+    console.error("Error generating content with Gemini:", error);
+    throw error;
   }
 };
 
@@ -978,4 +1229,5 @@ export default {
   analyzeDocument,
   chatWithAI,
   testConnection,
+  generateContent,
 };

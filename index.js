@@ -10,6 +10,11 @@ import fs from "fs";
 // Load environment variables
 dotenv.config();
 
+// Set default feature flags if not specified
+if (!process.env.FEATURE_AI_ENABLED) process.env.FEATURE_AI_ENABLED = "true";
+if (!process.env.FEATURE_AUDIT_ENABLED) process.env.FEATURE_AUDIT_ENABLED = "true";
+if (!process.env.FEATURE_HEALTHCHECKS_ENABLED) process.env.FEATURE_HEALTHCHECKS_ENABLED = "true";
+
 // Debug: Check if Google OAuth environment variables are loaded
 console.log("Google OAuth Config Check:");
 console.log(
@@ -36,10 +41,35 @@ import uploadRoutes from "./routes/upload.js";
 import aiRoutes from "./routes/ai.js";
 import authRoutes from "./routes/auth.js";
 import patientsRoutes from "./routes/patients.js";
+import billingRoutes from "./routes/billing.js";
+import newNursingRoutes from "./nursing/routes/nursingRoutes.js";
+import trainingProgressRoutes from "./nursing/routes/trainingProgressRoutes.js";
+import dataIntegrationRoutes from "./nursing/routes/dataIntegrationRoutes.js";
+import taskManagementRoutes from "./nursing/routes/taskManagementRoutes.js";
+import riskManagementRoutes from "./nursing/routes/riskManagementRoutes.js";
+import oasisAssessmentRoutes from "./nursing/routes/oasisAssessmentRoutes.js";
+import validationMetricsRoutes from "./routes/validationMetrics.js";
+import doctorRoutes from "./routes/doctor.js";
+import healthRoutes from "./routes/health.js";
+import patientCommunicationRoutes from "./routes/patientCommunication.js";
+
+// import WebSocketManager from "./services/nursing/WebSocketManager.js"; // Temporarily disabled
+import PatientCommunicationWebSocket from "./services/patientCommunicationWebSocket.js";
+import { createServer } from "http";
 
 // Create Express app
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// Create HTTP server for WebSocket support
+const server = createServer(app);
+
+// Initialize Patient Communication WebSocket
+const patientCommWS = new PatientCommunicationWebSocket();
+patientCommWS.initialize(server);
+
+// Make WebSocket manager available to routes
+app.locals.patientCommWS = patientCommWS;
 
 // Get current directory
 const __filename = fileURLToPath(import.meta.url);
@@ -87,8 +117,9 @@ app.use(
   })
 );
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Increase body parser limits for voice transcription
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Session middleware for passport
 app.use(
@@ -113,18 +144,35 @@ app.use("/uploads", express.static(join(__dirname, "uploads")));
 app.use("/api/auth", authRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/ai", aiRoutes);
+app.use("/api/doctor", doctorRoutes);
 app.use("/api/patients", patientsRoutes);
+app.use("/api/billing", billingRoutes);
+app.use("/api/nursing", newNursingRoutes);
+app.use("/api/nursing/training-progress", trainingProgressRoutes);
+app.use("/api/nursing/data-integration", dataIntegrationRoutes);
+app.use("/api/nursing/task-management", taskManagementRoutes);
+app.use("/api/nursing/risk-management", riskManagementRoutes);
+app.use("/api/nursing/oasis-assessments", oasisAssessmentRoutes);
+app.use("/api/patient-communication", patientCommunicationRoutes);
+app.use("/api/validation-metrics", validationMetricsRoutes);
 
-// Health check route
-app.get("/api/health", (req, res) => {
-  res.status(200).json({ status: "ok", message: "Server is running" });
+app.use("/api/health", healthRoutes);
+
+// Add a direct health check route as backup
+app.get("/health", (req, res) => {
+  res.json({ 
+    status: "ok", 
+    message: "Server is running",
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || "development"
+  });
 });
 
 // MongoDB connection with improved error handling
 const connectDB = async () => {
   try {
     const mongoURI =
-      process.env.MONGODB_URI || "mongodb://localhost:27017/jawbreaker";
+      process.env.MONGODB_URI || "mongodb://localhost:27017/jawbreakers";
     console.log("Attempting to connect to MongoDB...");
     console.log(
       "MongoDB URI:",
@@ -138,6 +186,7 @@ const connectDB = async () => {
     });
 
     console.log(`✅ Connected to MongoDB: ${conn.connection.host}`);
+    return true;
   } catch (error) {
     console.error("❌ MongoDB connection error:", error.message);
 
@@ -163,6 +212,7 @@ const connectDB = async () => {
       console.log(
         "⚠️  Continuing without MongoDB connection in development mode"
       );
+      return false;
     }
   }
 };
@@ -180,10 +230,47 @@ mongoose.connection.on("disconnected", () => {
   console.log("⚠️  Mongoose disconnected from MongoDB");
 });
 
-// Connect to MongoDB
-connectDB();
+// Start server function
+const startServer = async () => {
+  try {
+    // Try to connect to database
+    const dbConnected = await connectDB();
+    
+    if (dbConnected) {
+      console.log("🚀 Starting server with database connection...");
+    } else {
+      console.log("⚠️  Starting server without database connection (fallback mode)...");
+    }
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+    // Start the server
+    server.listen(PORT, () => {
+      console.log(`✅ Server is running on port ${PORT}`);
+      console.log(`🌐 Health check available at: http://localhost:${PORT}/api/health`);
+      console.log(`📊 API endpoints available at: http://localhost:${PORT}/api/`);
+      
+      if (!dbConnected) {
+        console.log("⚠️  Server is running in fallback mode - some features may not work");
+        console.log("💡 To enable full functionality, ensure MongoDB is running and accessible");
+      }
+    });
+
+    // Handle server errors
+    server.on('error', (error) => {
+      if (error.code === 'EADDRINUSE') {
+        console.error(`❌ Port ${PORT} is already in use`);
+        console.error("💡 Try stopping other services or using a different port");
+        process.exit(1);
+      } else {
+        console.error("❌ Server error:", error);
+        process.exit(1);
+      }
+    });
+
+  } catch (error) {
+    console.error("❌ Failed to start server:", error);
+    process.exit(1);
+  }
+};
+
+// Connect to MongoDB
+startServer();

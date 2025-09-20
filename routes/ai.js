@@ -160,6 +160,53 @@ router.post("/regenerate/:fileId", analyzeFile);
 // Route for AI chat functionality
 router.post("/chat", chatWithAI);
 
+// Route for care plan AI suggestions (proxy to nursing service)
+router.post("/generate-care-plan-suggestions", async (req, res) => {
+  try {
+    console.log("🔄 Proxying care plan suggestions request:", req.body);
+
+    // Forward the request to the nursing service
+    const nursingResponse = await fetch(
+      `${req.protocol}://${req.get(
+        "host"
+      )}/api/nursing/care-plans/ai-suggestions`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: req.headers.authorization,
+        },
+        body: JSON.stringify(req.body),
+      }
+    );
+
+    console.log("📡 Nursing service response status:", nursingResponse.status);
+
+    if (!nursingResponse.ok) {
+      const errorData = await nursingResponse.json().catch(() => ({}));
+      console.error("❌ Nursing service error:", errorData);
+
+      return res.status(nursingResponse.status).json({
+        success: false,
+        message: "Nursing service error",
+        error: errorData.message || `Status: ${nursingResponse.status}`,
+        details: errorData,
+      });
+    }
+
+    const data = await nursingResponse.json();
+    console.log("✅ Care plan suggestions generated successfully");
+    res.json(data);
+  } catch (error) {
+    console.error("❌ Error proxying care plan suggestions request:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to generate care plan suggestions",
+      error: error.message,
+    });
+  }
+});
+
 // Route to get current chat session for a patient
 router.get("/chat-session/:patientId", getChatSession);
 

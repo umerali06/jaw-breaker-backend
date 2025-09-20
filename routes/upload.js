@@ -27,21 +27,53 @@ const storage = multer.diskStorage({
   },
 });
 
-// File filter to only accept certain file types
+// File filter to accept various document types
 const fileFilter = (req, file, cb) => {
-  // Accept pdf, docx, doc, txt files
-  if (
-    file.mimetype === "application/pdf" ||
-    file.mimetype === "application/msword" ||
-    file.mimetype ===
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-    file.mimetype === "text/plain"
-  ) {
+  // Get file extension
+  const fileExtension = file.originalname.toLowerCase().split('.').pop();
+  
+  // Accept multiple document formats for comprehensive analysis
+  const allowedMimeTypes = [
+    // PDF files
+    "application/pdf",
+    
+    // Word documents
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    
+    // Text files
+    "text/plain",
+    "text/csv",
+    
+    // Excel files
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    
+    // HTML files
+    "text/html",
+    
+    // JSON files
+    "application/json",
+    
+    // Generic binary type (for files that browsers can't properly detect)
+    "application/octet-stream"
+  ];
+  
+  // Define allowed file extensions for when MIME type detection fails
+  const allowedExtensions = [
+    'pdf', 'doc', 'docx', 'txt', 'csv', 'xls', 'xlsx', 'html', 'htm', 'json'
+  ];
+  
+  // Check if file is allowed by MIME type or extension
+  const isAllowedMimeType = allowedMimeTypes.includes(file.mimetype);
+  const isAllowedExtension = allowedExtensions.includes(fileExtension);
+  
+  if (isAllowedMimeType || isAllowedExtension) {
     cb(null, true);
   } else {
     cb(
       new Error(
-        "Unsupported file type. Please upload PDF, DOCX, DOC, or TXT files only."
+        `Unsupported file type: ${file.mimetype} (.${fileExtension}). Please upload PDF, DOCX, DOC, TXT, CSV, XLSX, XLS, HTML, or JSON files only.`
       ),
       false
     );

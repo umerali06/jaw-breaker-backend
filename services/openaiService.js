@@ -2,13 +2,30 @@ import OpenAI from "openai";
 import dotenv from "dotenv";
 import fs from "fs";
 import pdfParse from "pdf-parse";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
+import azureOpenAIService from "./azureOpenAIService.js";
 
-dotenv.config();
+// Get the directory of the current module
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
-// Initialize OpenAI
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Load environment variables from the server directory
+dotenv.config({ path: join(__dirname, "../.env") });
+
+// Initialize OpenAI only if API key is provided
+let openai = null;
+if (
+  process.env.OPENAI_API_KEY &&
+  process.env.OPENAI_API_KEY !== "placeholder-key-to-prevent-server-crash"
+) {
+  openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
+  console.log("OpenAI service initialized successfully");
+} else {
+  console.log("OpenAI API key not provided - OpenAI features will be disabled");
+}
 
 /**
  * Extract text from a file based on its mimetype
@@ -51,6 +68,36 @@ export const extractTextFromFile = async (filePath, mimetype) => {
  */
 export const generateSOAPNote = async (text, patientContext = {}) => {
   try {
+    // Try Azure OpenAI first (primary)
+    try {
+      console.log("🚀 [SOAP Note] Using Azure OpenAI as primary service...");
+      const azureResponse = await azureOpenAIService.chatWithAI(
+        `Generate a comprehensive SOAP note based on the following clinical documentation:\n\n${text}`,
+        patientContext
+      );
+      console.log("✅ [SOAP Note] Azure OpenAI response successful");
+      return {
+        success: true,
+        soapNote: azureResponse,
+        model: "gpt-5-chat",
+        provider: "azure-openai"
+      };
+    } catch (azureError) {
+      console.warn("⚠️ [SOAP Note] Azure OpenAI failed, falling back to OpenAI:", azureError.message);
+    }
+
+    // Fallback to OpenAI
+    if (!openai) {
+      console.log("OpenAI not available - returning fallback SOAP note");
+      return {
+        subjective:
+          "AI service not configured. Please add API keys to environment variables.",
+        objective: "Please manually document objective findings.",
+        assessment: "Manual clinical assessment required.",
+        plan: "Please create treatment plan manually.",
+      };
+    }
+
     const systemPrompt = `You are a clinical documentation assistant specializing in home health and skilled nursing documentation. You generate CMS-compliant, chart-ready documentation following SOAP format.
 
 DOCUMENTATION REQUIREMENTS:
@@ -129,6 +176,38 @@ export const generateOASISScores = async (
   items = ["M1830", "M1840", "M1850", "M1860"]
 ) => {
   try {
+    // Try Azure OpenAI first (primary)
+    try {
+      console.log("🚀 [OASIS Scores] Using Azure OpenAI as primary service...");
+      const azureResponse = await azureOpenAIService.chatWithAI(
+        `Generate accurate OASIS scores based on the following clinical documentation:\n\n${text}`,
+        { items }
+      );
+      console.log("✅ [OASIS Scores] Azure OpenAI response successful");
+      return {
+        success: true,
+        scores: azureResponse,
+        model: "gpt-5-chat",
+        provider: "azure-openai"
+      };
+    } catch (azureError) {
+      console.warn("⚠️ [OASIS Scores] Azure OpenAI failed, falling back to OpenAI:", azureError.message);
+    }
+
+    // Fallback to OpenAI
+    if (!openai) {
+      console.log("OpenAI not available - returning fallback OASIS scores");
+      const fallbackScores = {};
+      items.forEach((item) => {
+        fallbackScores[item] = {
+          score: 0,
+          rationale:
+            "AI service not configured. Please add API keys to environment variables.",
+          confidence: 0,
+        };
+      });
+      return fallbackScores;
+    }
     const systemPrompt = `You are an OASIS scoring specialist with expertise in CMS guidelines. When OASIS items are requested, provide:
 - CMS score format (e.g., M1830: 2)
 - Short clinical rationale for each score
@@ -195,6 +274,37 @@ ${text.substring(0, 8000)}`;
 export const generateClinicalAnalysis = async (text) => {
   try {
     console.log("Starting clinical analysis...");
+
+    // Check if OpenAI is available
+    if (!openai) {
+      console.log(
+        "OpenAI not available - returning fallback clinical analysis"
+      );
+      return {
+        summary:
+          "OpenAI service not configured. Please add OPENAI_API_KEY to environment variables.",
+        clinicalInsights: [
+          {
+            type: "alert",
+            message: "OpenAI API key not configured - AI analysis unavailable",
+            priority: "medium",
+          },
+        ],
+        extractedEntities: {
+          medications: [],
+          conditions: [],
+          procedures: [],
+          vitals: {},
+          allergies: [],
+        },
+        careGoals: [],
+        interventions: [],
+        riskFactors: [],
+        providerCommunication: [],
+        skilledNeedJustification:
+          "Manual review required - OpenAI service not configured",
+      };
+    }
     const systemPrompt = `You are a clinical documentation assistant specializing in home health care analysis. Analyze the provided documentation and generate comprehensive clinical insights.
 
 ANALYSIS REQUIREMENTS:
@@ -295,33 +405,67 @@ export const analyzeDocument = async (
   patientContext = {}
 ) => {
   try {
-    // Extract text from file
-    const text = await extractTextFromFile(filePath, mimetype);
+    console.log("🔍 [Document Analysis] Starting analysis with Azure OpenAI...");
+    
+    // Use Azure OpenAI for document analysis
+    const analysis = await azureOpenAIService.analyzeDocument(filePath, mimetype, {
+      patientId: patientContext.patientId,
+      documentType: patientContext.documentType || 'Clinical Document',
+      patientContext: patientContext
+    });
 
-    // Generate comprehensive analysis
-    const [clinicalAnalysis, soapNote, oasisScores] = await Promise.all([
-      generateClinicalAnalysis(text),
-      generateSOAPNote(text, patientContext),
-      generateOASISScores(text),
-    ]);
-
-    // Combine results into comprehensive analysis
-    return {
-      summary: clinicalAnalysis.summary,
-      clinicalInsights: clinicalAnalysis.clinicalInsights,
-      extractedEntities: clinicalAnalysis.extractedEntities,
-      careGoals: clinicalAnalysis.careGoals,
-      interventions: clinicalAnalysis.interventions,
-      riskFactors: clinicalAnalysis.riskFactors,
-      providerCommunication: clinicalAnalysis.providerCommunication,
-      skilledNeedJustification: clinicalAnalysis.skilledNeedJustification,
-      soapNote: soapNote,
-      oasisScores: oasisScores,
-      rawText: text.substring(0, 1000) + (text.length > 1000 ? "..." : ""),
-    };
+    if (analysis.success) {
+      console.log("✅ [Document Analysis] Azure OpenAI analysis completed successfully");
+      return {
+        summary: analysis.analysis,
+        clinicalInsights: analysis.insights,
+        extractedEntities: [],
+        careGoals: [],
+        interventions: [],
+        riskFactors: [],
+        providerCommunication: [],
+        skilledNeedJustification: [],
+        soapNote: "",
+        oasisScores: {},
+        rawText: analysis.extractedText,
+        qualityScore: analysis.qualityScore,
+        provider: analysis.provider,
+        timestamp: analysis.timestamp
+      };
+    } else {
+      throw new Error(analysis.error || 'Azure OpenAI analysis failed');
+    }
   } catch (error) {
-    console.error("Error analyzing document:", error);
-    throw error;
+    console.error("❌ [Document Analysis] Azure OpenAI failed, falling back to legacy analysis:", error.message);
+    
+    // Fallback to legacy analysis if Azure OpenAI fails
+    try {
+      const text = await extractTextFromFile(filePath, mimetype);
+      const [clinicalAnalysis, soapNote, oasisScores] = await Promise.all([
+        generateClinicalAnalysis(text),
+        generateSOAPNote(text, patientContext),
+        generateOASISScores(text),
+      ]);
+
+      return {
+        summary: clinicalAnalysis.summary,
+        clinicalInsights: clinicalAnalysis.clinicalInsights,
+        extractedEntities: clinicalAnalysis.extractedEntities,
+        careGoals: clinicalAnalysis.careGoals,
+        interventions: clinicalAnalysis.interventions,
+        riskFactors: clinicalAnalysis.riskFactors,
+        providerCommunication: clinicalAnalysis.providerCommunication,
+        skilledNeedJustification: clinicalAnalysis.skilledNeedJustification,
+        soapNote: soapNote,
+        oasisScores: oasisScores,
+        rawText: text.substring(0, 1000) + (text.length > 1000 ? "..." : ""),
+        provider: 'Legacy OpenAI',
+        fallback: true
+      };
+    } catch (fallbackError) {
+      console.error("❌ [Document Analysis] Both Azure OpenAI and fallback failed:", fallbackError.message);
+      throw fallbackError;
+    }
   }
 };
 
@@ -333,7 +477,24 @@ export const analyzeDocument = async (
  */
 export const chatWithAI = async (message, context = {}) => {
   try {
-    const systemPrompt = `You are a clinical documentation assistant specializing in:
+    console.log("💬 [Chat AI] Starting chat with Azure OpenAI...");
+    
+    // Use Azure OpenAI for chat
+    const response = await azureOpenAIService.chatWithAI(message, context);
+    
+    console.log("✅ [Chat AI] Azure OpenAI chat completed successfully");
+    return response;
+    
+  } catch (error) {
+    console.error("❌ [Chat AI] Azure OpenAI failed, falling back to legacy chat:", error.message);
+    
+    // Fallback to legacy OpenAI chat if Azure OpenAI fails
+    try {
+      if (!openai) {
+        return "AI service is not configured. Please check your API keys to enable AI chat features.";
+      }
+      
+      const systemPrompt = `You are a clinical documentation assistant specializing in:
 - OASIS (Outcome and Assessment Information Set) scoring and analysis
 - SOAP note generation and clinical documentation
 - Clinical insights and care plan recommendations
@@ -351,34 +512,37 @@ CAPABILITIES:
 
 Always respond in a clear, structured, and compliant format suitable for clinical documentation.`;
 
-    let userPrompt = message;
+      let userPrompt = message;
 
-    // Add context if provided
-    if (context.patientName) {
-      userPrompt += `\n\nPatient Context: ${context.patientName}`;
+      // Add context if provided
+      if (context.patientName) {
+        userPrompt += `\n\nPatient Context: ${context.patientName}`;
+      }
+
+      if (context.recentDocuments && context.recentDocuments.length > 0) {
+        userPrompt += `\nRecent Documents: ${context.recentDocuments.join(", ")}`;
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt,
+          },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.3,
+        max_tokens: 1500,
+      });
+
+      console.log("✅ [Chat AI] Legacy OpenAI fallback successful");
+      return response.choices[0].message.content;
+      
+    } catch (fallbackError) {
+      console.error("❌ [Chat AI] Both Azure OpenAI and fallback failed:", fallbackError.message);
+      throw fallbackError;
     }
-
-    if (context.recentDocuments && context.recentDocuments.length > 0) {
-      userPrompt += `\nRecent Documents: ${context.recentDocuments.join(", ")}`;
-    }
-
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: systemPrompt,
-        },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: 0.3,
-      max_tokens: 1500,
-    });
-
-    return response.choices[0].message.content;
-  } catch (error) {
-    console.error("Error in AI chat:", error);
-    throw error;
   }
 };
 

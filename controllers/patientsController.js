@@ -36,11 +36,23 @@ export const createPatient = async (req, res) => {
       });
     }
 
-    const patient = new Patient({
-      ...req.body,
+    // Map old field structure to new schema structure
+    const patientData = {
+      mrn: req.body.mrn || `MRN${Date.now()}`, // Generate MRN if not provided
+      demographics: {
+        name: req.body.name,
+        dob: req.body.dob || new Date(Date.now() - (req.body.age * 365 * 24 * 60 * 60 * 1000)), // Calculate DOB from age if not provided
+        sex: req.body.gender,
+        phone: req.body.phone,
+        email: req.body.email || null,
+      },
+      condition: req.body.condition || "stable",
+      notes: req.body.notes || "",
       userId: req.userId, // Keep for legacy compatibility
       createdBy: req.userId, // Add for new format
-    });
+    };
+
+    const patient = new Patient(patientData);
 
     await patient.save();
     res.status(201).json({ success: true, patient });
@@ -59,7 +71,12 @@ export const getAllPatients = async (req, res) => {
     const skip = (page - 1) * limit;
 
     // Build query
-    let query = { userId: req.userId };
+    let query = { 
+      $or: [
+        { userId: req.userId }, // Old format
+        { createdBy: req.userId }, // New format
+      ]
+    };
 
     // Add search functionality
     if (search) {
@@ -76,22 +93,66 @@ export const getAllPatients = async (req, res) => {
 
     console.log("Query:", query); // Debug log
 
+    // First get patients with basic info
     const patients = await Patient.find(query)
+      .populate({
+        path: 'documents',
+        select: 'filename originalname createdAt processingStatus mimetype analysis extractedText contentLength'
+      })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit));
 
+    // Enhance patients with document counts and diagnosis info
+    const enhancedPatients = await Promise.all(
+      patients.map(async (patient) => {
+        const patientObj = patient.toObject();
+        
+        // Get document count for this patient
+        let documentCount = 0;
+        if (patientObj.documents && patientObj.documents.length > 0) {
+          documentCount = patientObj.documents.length;
+        } else {
+          // Fallback: count documents by patientId or patientName
+          const docCount = await File.countDocuments({
+            $or: [
+              { patientId: patientObj._id.toString() },
+              { patientName: patientObj.name }
+            ],
+            $or: [
+              { userId: req.userId },
+              { userId: req.userId.toString() }
+            ]
+          });
+          documentCount = docCount;
+        }
+
+        // Ensure diagnosis fields are properly set
+        const enhancedPatient = {
+          ...patientObj,
+          documents: patientObj.documents || [],
+          documentCount: documentCount,
+          primaryDiagnosis: patientObj.primaryDiagnosis || patientObj.diagnosis || null,
+          secondaryDiagnoses: patientObj.secondaryDiagnoses || [],
+          // Ensure we have the diagnosis field for backward compatibility
+          diagnosis: patientObj.primaryDiagnosis || patientObj.diagnosis || null
+        };
+
+        return enhancedPatient;
+      })
+    );
+
     const total = await Patient.countDocuments(query);
 
-    console.log(`Found ${patients.length} patients out of ${total} total`); // Debug log
+    console.log(`Found ${enhancedPatients.length} patients out of ${total} total`); // Debug log
 
     res.json({
       success: true,
-      patients,
+      patients: enhancedPatients,
       pagination: {
         current: parseInt(page),
         total: Math.ceil(total / limit),
-        count: patients.length,
+        count: enhancedPatients.length,
         totalRecords: total,
       },
     });

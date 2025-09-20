@@ -1,0 +1,1 @@
+This is a test clinical note for Ahmad Hassan. Patient has hypertension and diabetes. Blood pressure is 140/90. Blood sugar is 180 mg/dL. Patient is stable and taking medications as prescribed.

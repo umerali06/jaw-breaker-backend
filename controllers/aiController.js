@@ -1,6 +1,7 @@
 import File from "../models/File.js";
 import ChatSession from "../models/ChatSession.js";
 import PatientDataService from "../services/patientDataService.js";
+import azureOpenAIService from '../services/azureOpenAIService.js';
 import {
   analyzeDocument,
   generateSOAPNote,
@@ -18,6 +19,14 @@ export const analyzeFile = async (req, res) => {
   try {
     const { fileId } = req.params;
     console.log("Analyzing file request:", { fileId, userId: req.userId });
+
+    // Validate fileId
+    if (!fileId || fileId === 'undefined' || fileId === 'null') {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid file ID provided"
+      });
+    }
 
     // Find the file in the database
     const file = await File.findById(fileId);
@@ -92,9 +101,9 @@ export const analyzeFile = async (req, res) => {
         id: file.patientId,
       };
 
-      // Analyze the document with enhanced clinical analysis
+      // Analyze the document with enhanced clinical analysis using Azure OpenAI
       console.log("Starting analysis for file:", file.originalname);
-      const analysis = await analyzeDocument(
+      const analysis = await azureOpenAIService.analyzeDocument(
         file.path,
         file.mimetype,
         patientContext
@@ -231,9 +240,24 @@ export const analyzeFile = async (req, res) => {
       });
     } catch (error) {
       console.error("Error during analysis processing:", error);
-      // Update processing status to failed
+      
+      // Update processing status to failed with more specific error messages
       file.processingStatus = "failed";
-      file.processingError = error.message || "Unknown error during analysis";
+      
+      // Provide more user-friendly error messages
+      let userFriendlyError = error.message || "Unknown error during analysis";
+      
+      if (error.message.includes('PDF text extraction failed')) {
+        userFriendlyError = "PDF parsing failed. The file may be corrupted, password-protected, or contain only images. Please try uploading a different PDF file.";
+      } else if (error.message.includes('Invalid PDF structure')) {
+        userFriendlyError = "Invalid PDF structure. The file appears to be corrupted or not a valid PDF. Please try uploading a different file.";
+      } else if (error.message.includes('password-protected')) {
+        userFriendlyError = "The PDF file is password-protected and cannot be processed. Please remove the password and try again.";
+      } else if (error.message.includes('File not found')) {
+        userFriendlyError = "The uploaded file could not be found. Please try uploading again.";
+      }
+      
+      file.processingError = userFriendlyError;
       file.processingCompleted = new Date();
       await file.save();
       console.log("File status updated to failed");
@@ -242,10 +266,30 @@ export const analyzeFile = async (req, res) => {
     }
   } catch (error) {
     console.error("Error analyzing file:", error);
-    res.status(500).json({
+    
+    // Provide more specific error messages based on error type
+    let userMessage = "Error analyzing file";
+    let statusCode = 500;
+    
+    if (error.message.includes('PDF text extraction failed')) {
+      userMessage = "PDF parsing failed. The file may be corrupted, password-protected, or contain only images.";
+      statusCode = 400;
+    } else if (error.message.includes('Invalid PDF structure')) {
+      userMessage = "Invalid PDF structure. The file appears to be corrupted or not a valid PDF.";
+      statusCode = 400;
+    } else if (error.message.includes('password-protected')) {
+      userMessage = "The PDF file is password-protected and cannot be processed.";
+      statusCode = 400;
+    } else if (error.message.includes('File not found')) {
+      userMessage = "The uploaded file could not be found.";
+      statusCode = 404;
+    }
+    
+    res.status(statusCode).json({
       success: false,
-      message: "Error analyzing file",
+      message: userMessage,
       error: error.message,
+      errorType: error.message.includes('PDF') ? 'PDF_PARSING_ERROR' : 'ANALYSIS_ERROR'
     });
   }
 };
@@ -729,7 +773,7 @@ export const chatWithAI = async (req, res) => {
             req.userId
           );
           console.log(`👤 Patient data retrieved:`, {
-            name: patient.name,
+            name: patient.demographics?.name,
             id: patient.id,
             documentsCount: patient.documents?.length || 0,
           });
@@ -757,7 +801,7 @@ export const chatWithAI = async (req, res) => {
           chatSession = await ChatSession.createSession({
             patientId,
             userId: req.userId,
-            patientName: patient.name,
+            patientName: patient.demographics?.name || 'Unknown Patient',
             documents: documentStrings,
             latestSummary: context?.latestSummary,
             documentContext: context?.documentContext || {},
@@ -936,9 +980,9 @@ export const chatWithAI = async (req, res) => {
       }
     }
 
-    // Use the enhanced AI chat service with rich context
-    console.log("Sending chat request to AI service with enhanced context");
-    const aiResponse = await aiChatService(message, chatContext);
+    // Use Azure OpenAI directly for enhanced chat with rich context
+    console.log("🤖 [ChatPanel] Sending chat request to Azure OpenAI with enhanced context");
+    const aiResponse = await azureOpenAIService.chatWithAI(message, chatContext);
 
     // Save conversation to chat session
     if (chatSession) {

@@ -1,0 +1,36 @@
+Patient Assessment Report
+
+Patient: John Doe
+Age: 65
+Gender: Male
+MRN: 12345
+
+Chief Complaint: Patient presents with chest pain and shortness of breath.
+
+History of Present Illness: 65-year-old male with a history of hypertension and diabetes presents to the emergency department with acute onset chest pain that started 2 hours ago. Pain is described as pressure-like, 8/10 intensity, radiating to left arm. Associated with diaphoresis and nausea.
+
+Vital Signs:
+- Blood Pressure: 160/95 mmHg
+- Heart Rate: 95 bpm
+- Temperature: 98.6°F
+- Respiratory Rate: 22 breaths/min
+- Oxygen Saturation: 94% on room air
+
+Physical Examination:
+- General: Alert, oriented, appears anxious
+- Cardiovascular: Regular rate and rhythm, no murmurs
+- Respiratory: Clear to auscultation bilaterally
+- Extremities: No edema, pulses intact
+
+Assessment and Plan:
+1. Acute chest pain - rule out myocardial infarction
+2. Hypertension - elevated blood pressure
+3. Diabetes mellitus - well controlled
+
+Plan:
+- EKG and cardiac enzymes
+- Chest X-ray
+- Aspirin 325mg
+- Nitroglycerin as needed
+- Cardiology consultation
+- Discharge planning pending test results

@@ -79,8 +79,8 @@ class AuthService {
    */
   static async validateCredentials(email, password) {
     try {
-      // Find user by email
-      const user = await User.findByEmail(email);
+      // Find user by email and populate subscriptions
+      const user = await User.findByEmail(email).populate("subscriptions");
       if (!user) {
         return {
           success: false,
@@ -136,6 +136,7 @@ class AuthService {
         email,
         password,
         name,
+        signupSource: "free",
         isEmailVerified: false,
       });
 
@@ -173,7 +174,7 @@ class AuthService {
       const avatar = photos && photos[0] ? photos[0].value : null;
 
       // Check if user exists with Google ID
-      let user = await User.findByGoogleId(googleId);
+      let user = await User.findByGoogleId(googleId).populate("subscriptions");
 
       if (user) {
         // Update last login
@@ -183,7 +184,7 @@ class AuthService {
       }
 
       // Check if user exists with same email
-      user = await User.findByEmail(email);
+      user = await User.findByEmail(email).populate("subscriptions");
 
       if (user) {
         // Link Google account to existing user
@@ -202,6 +203,7 @@ class AuthService {
         googleId,
         name: displayName,
         avatar,
+        signupSource: "google",
         isEmailVerified: true, // Google accounts are pre-verified
         lastLogin: new Date(),
       });

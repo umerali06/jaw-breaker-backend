@@ -1,0 +1,3 @@
+Patient ID,Name,Age,Gender,Diagnosis,Medications,Allergies
+P001,Ahmad Hassan,65,Male,Hypertension,Metformin,Lisinopril,None
+P002,Mary Johnson,58,Female,Diabetes,Insulin,Metformin,Penicillin

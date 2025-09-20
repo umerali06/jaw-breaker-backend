@@ -2,24 +2,157 @@ import mongoose from "mongoose";
 
 const patientSchema = new mongoose.Schema(
   {
-    name: {
+    mrn: {
       type: String,
       required: true,
+      unique: true,
+      trim: true,
+      index: true
+    },
+    demographics: {
+      name: {
+        type: String,
+        required: true,
+        trim: true,
+        maxlength: 100,
+      },
+      dob: {
+        type: Date,
+        required: true,
+      },
+      sex: {
+        type: String,
+        required: true,
+        enum: ['male', 'female', 'other', 'unknown'],
+      },
+      phone: {
+        type: String,
+        required: false,
+        trim: true,
+      },
+      email: {
+        type: String,
+        required: false,
+        trim: true,
+        lowercase: true,
+      },
+      height: {
+        type: Number,
+        required: false,
+        min: 0,
+        max: 300, // cm
+      },
+      weight: {
+        type: Number,
+        required: false,
+        min: 0,
+        max: 1000, // kg
+      },
+      address: {
+        street: String,
+        city: String,
+        state: String,
+        zipCode: String,
+        country: String,
+      },
+    },
+    clinicalTimeline: [{
+      _id: {
+        type: mongoose.Schema.Types.ObjectId,
+        auto: true
+      },
+      type: {
+        type: String,
+        required: true,
+        enum: ['assessment', 'medication', 'lab_result', 'radiology', 'note', 'procedure', 'visit', 'discharge', 'referral']
+      },
+      date: {
+        type: Date,
+        required: true,
+        index: true
+      },
+      refId: {
+        type: mongoose.Schema.Types.ObjectId,
+        required: false
+      },
+      summary: {
+        type: String,
+        required: true,
+        trim: true
+      }
+    }],
+    currentMedications: [{
+      drugCode: {
+        type: String,
+        required: true,
+        trim: true
+      },
+      name: {
+        type: String,
+        required: true,
+        trim: true
+      },
+      dose: {
+        type: String,
+        required: true,
+        trim: true
+      },
+      route: {
+        type: String,
+        required: true,
+        trim: true
+      },
+      frequency: {
+        type: String,
+        required: true,
+        trim: true
+      },
+      startDate: {
+        type: Date,
+        required: true
+      },
+      endDate: {
+        type: Date,
+        required: false
+      }
+    }],
+    allergies: [{
+      substance: {
+        type: String,
+        required: true,
+        trim: true
+      },
+      reaction: {
+        type: String,
+        required: true,
+        trim: true
+      },
+      severity: {
+        type: String,
+        required: true,
+        enum: ['mild', 'moderate', 'severe', 'life_threatening']
+      }
+    }],
+    // Legacy fields for backward compatibility
+    name: {
+      type: String,
+      required: false,
       trim: true,
       maxlength: 100,
     },
     dateOfBirth: {
       type: Date,
-      required: false, // Make optional for legacy compatibility
+      required: false,
     },
     medicalRecordNumber: {
       type: String,
-      required: false, // Make optional for legacy compatibility
+      required: false,
       trim: true,
     },
     primaryDiagnosis: {
       type: String,
-      required: false, // Make optional for legacy compatibility
+      required: false,
+      trim: true,
     },
     secondaryDiagnoses: [
       {
@@ -27,10 +160,27 @@ const patientSchema = new mongoose.Schema(
         trim: true,
       },
     ],
-    allergies: [
+    conditions: [
       {
-        type: String,
-        trim: true,
+        name: {
+          type: String,
+          required: true,
+          trim: true,
+        },
+        status: {
+          type: String,
+          enum: ['active', 'inactive', 'resolved', 'chronic'],
+          default: 'active',
+        },
+        onsetDate: {
+          type: Date,
+          required: false,
+        },
+        severity: {
+          type: String,
+          enum: ['mild', 'moderate', 'severe'],
+          required: false,
+        },
       },
     ],
     medications: [
@@ -56,15 +206,15 @@ const patientSchema = new mongoose.Schema(
     emergencyContact: {
       name: {
         type: String,
-        required: false, // Make optional for legacy compatibility
+        required: false,
       },
       relationship: {
         type: String,
-        required: false, // Make optional for legacy compatibility
+        required: false,
       },
       phone: {
         type: String,
-        required: false, // Make optional for legacy compatibility
+        required: false,
       },
     },
     insuranceInfo: {
@@ -98,30 +248,19 @@ const patientSchema = new mongoose.Schema(
         ref: "File",
       },
     ],
-    visits: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "VisitRecord",
-      },
-    ],
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: false, // Make optional for legacy compatibility
+      required: true,
     },
     isActive: {
       type: Boolean,
       default: true,
     },
-    // Legacy fields for backward compatibility
-    age: { type: Number },
-    gender: { type: String },
-    phone: { type: String },
-    condition: { type: String },
-    notes: { type: String },
-    userId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
+    status: {
+      type: String,
+      enum: ["active", "inactive", "discharged", "deceased"],
+      default: "active",
     },
   },
   {
@@ -132,58 +271,10 @@ const patientSchema = new mongoose.Schema(
 );
 
 // Indexes for performance
-patientSchema.index({ medicalRecordNumber: 1 });
-patientSchema.index({ createdBy: 1, createdAt: -1 });
-patientSchema.index({ name: 1, createdBy: 1 });
-patientSchema.index({ isActive: 1 });
+patientSchema.index({ mrn: 1 });
+patientSchema.index({ "clinicalTimeline.date": 1 });
+patientSchema.index({ createdBy: 1 });
+patientSchema.index({ status: 1 });
+patientSchema.index({ "demographics.name": 1 });
 
-// Virtual for age calculation
-patientSchema.virtual("calculatedAge").get(function () {
-  if (!this.dateOfBirth) return this.age; // Fallback to legacy age field
-  const today = new Date();
-  const birthDate = new Date(this.dateOfBirth);
-  let age = today.getFullYear() - birthDate.getFullYear();
-  const monthDiff = today.getMonth() - birthDate.getMonth();
-  if (
-    monthDiff < 0 ||
-    (monthDiff === 0 && today.getDate() < birthDate.getDate())
-  ) {
-    age--;
-  }
-  return age;
-});
-
-// Instance method to get safe patient data (HIPAA compliant)
-patientSchema.methods.toSafeJSON = function () {
-  return {
-    id: this._id,
-    name: this.name,
-    age: this.calculatedAge,
-    primaryDiagnosis: this.primaryDiagnosis,
-    medicalRecordNumber: this.medicalRecordNumber,
-    isActive: this.isActive,
-    createdAt: this.createdAt,
-    updatedAt: this.updatedAt,
-  };
-};
-
-// Static method to search patients
-patientSchema.statics.searchPatients = function (query, userId) {
-  const searchRegex = new RegExp(query, "i");
-  return this.find({
-    $and: [
-      { createdBy: userId },
-      { isActive: true },
-      {
-        $or: [
-          { name: searchRegex },
-          { medicalRecordNumber: searchRegex },
-          { primaryDiagnosis: searchRegex },
-        ],
-      },
-    ],
-  }).sort({ updatedAt: -1 });
-};
-
-const Patient = mongoose.model("Patient", patientSchema);
-export default Patient;
+export default mongoose.model("Patient", patientSchema);

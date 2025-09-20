@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Patient from "../models/Patient.js";
 import VisitRecord from "../models/VisitRecord.js";
 import File from "../models/File.js";
@@ -95,7 +96,7 @@ class PatientDataService {
           "documents",
           "filename originalname createdAt processingStatus"
         )
-        .populate("visits");
+        // .populate("visits"); // Visits field not available in Patient model
 
       if (!patient) {
         throw new Error("Patient not found or access denied");
@@ -234,15 +235,61 @@ class PatientDataService {
     }
   }
 
-  static async getPatientDocuments(patientId, userId) {
+    static async getPatientDocuments(patientId, userId) {
     try {
-      const patient = await Patient.findOne({
-        _id: patientId,
-        $or: [
-          { createdBy: userId }, // New format
-          { userId: userId }, // Legacy format
-        ],
-      });
+      console.log(`🔍 Getting documents for patient ${patientId} and user ${userId}`);
+      
+      let patient;
+      let patientName;
+      
+      // Try to get patient info using Patient model first
+      try {
+        console.log('📋 Attempting to use Patient model...');
+        patient = await Patient.findOne({
+          _id: patientId,
+          $or: [
+            { createdBy: userId }, // New format
+            { userId: userId }, // Legacy format
+          ],
+        });
+        
+        if (patient) {
+          console.log(`✅ Patient model successful: ${patient.name}`);
+          patientName = patient.name;
+        }
+      } catch (patientError) {
+        console.log(`⚠️ Patient model failed: ${patientError.message}`);
+        console.log('🔄 Falling back to direct collection access...');
+        
+        // Fallback: Use direct collection access
+        try {
+          if (mongoose.connection && mongoose.connection.db) {
+            const patientsCollection = mongoose.connection.db.collection('patients');
+            const directPatient = await patientsCollection.findOne({ 
+              _id: new mongoose.Types.ObjectId(patientId) 
+            });
+            
+            if (directPatient) {
+              console.log(`✅ Direct collection access successful: ${directPatient.name}`);
+              patientName = directPatient.name;
+              // Create a minimal patient object for compatibility
+              patient = {
+                _id: directPatient._id,
+                name: directPatient.name,
+                documents: directPatient.documents || [],
+                userId: directPatient.userId
+              };
+            } else {
+              throw new Error("Patient not found in direct collection access");
+            }
+          } else {
+            throw new Error("MongoDB connection not available for fallback");
+          }
+        } catch (fallbackError) {
+          throw new Error(`Both Patient model and fallback failed: ${fallbackError.message}`);
+        }
+      }
+      
       if (!patient) {
         throw new Error("Patient not found or access denied");
       }
@@ -252,14 +299,18 @@ class PatientDataService {
 
       // Method 1: Find by documents array (preferred method)
       if (patient.documents && patient.documents.length > 0) {
+        console.log(`📄 Found ${patient.documents.length} documents in patient.documents array`);
         const documentsFromArray = await File.find({
           _id: { $in: patient.documents },
           $or: [
             { userId: userId },
             { userId: userId.toString() }, // Handle string vs ObjectId
           ],
-        }).sort({ createdAt: -1 });
+        })
+        .select('filename originalname createdAt processingStatus extractedText contentLength mimetype size')
+        .sort({ createdAt: -1 });
         documents = documents.concat(documentsFromArray);
+        console.log(`✅ Retrieved ${documentsFromArray.length} documents from array method`);
       }
 
       // Method 2: Find by patientId field (fallback)
@@ -269,16 +320,24 @@ class PatientDataService {
           { userId: userId },
           { userId: userId.toString() }, // Handle string vs ObjectId
         ],
-      }).sort({ createdAt: -1 });
+      })
+        .select('filename originalname createdAt processingStatus extractedText contentLength mimetype size')
+        .sort({ createdAt: -1 });
+      
+      console.log(`✅ Retrieved ${documentsByPatientId.length} documents from patientId method`);
 
       // Method 3: Find by patientName (additional fallback)
       const documentsByPatientName = await File.find({
-        patientName: patient.name,
+        patientName: patientName,
         $or: [
           { userId: userId },
           { userId: userId.toString() }, // Handle string vs ObjectId
         ],
-      }).sort({ createdAt: -1 });
+      })
+        .select('filename originalname createdAt processingStatus extractedText contentLength mimetype size')
+        .sort({ createdAt: -1 });
+      
+      console.log(`✅ Retrieved ${documentsByPatientName.length} documents from patientName method`);
 
       // Combine and deduplicate documents
       const allDocuments = [
@@ -294,6 +353,14 @@ class PatientDataService {
           self.findIndex((d) => d._id.toString() === doc._id.toString())
       );
 
+      console.log(`📊 Final document count: ${uniqueDocuments.length}`);
+      
+      // Log content length for debugging
+      uniqueDocuments.forEach((doc, index) => {
+        const contentLength = doc.contentLength || (doc.extractedText ? doc.extractedText.length : 0);
+        console.log(`Document ${index + 1}: ${doc.filename} - Content length: ${contentLength} characters`);
+      });
+
       // If we found documents but the patient.documents array is empty, update it
       if (
         uniqueDocuments.length > 0 &&
@@ -302,12 +369,20 @@ class PatientDataService {
         console.log(
           `Updating patient ${patient.name} documents array with ${uniqueDocuments.length} documents`
         );
-        patient.documents = uniqueDocuments.map((doc) => doc._id);
-        await patient.save();
+        // Only try to save if we have a real Patient model instance
+        if (patient.save && typeof patient.save === 'function') {
+          try {
+            patient.documents = uniqueDocuments.map((doc) => doc._id);
+            await patient.save();
+          } catch (saveError) {
+            console.log(`⚠️ Could not save patient documents update: ${saveError.message}`);
+          }
+        }
       }
 
       return uniqueDocuments;
     } catch (error) {
+      console.error(`❌ Error in getPatientDocuments: ${error.message}`);
       throw new Error(`Failed to get patient documents: ${error.message}`);
     }
   }
