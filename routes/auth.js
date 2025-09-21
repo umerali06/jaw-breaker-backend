@@ -1,63 +1,71 @@
-import express from "express";
-import passport from "../config/passport.js";
-import {
-  signup,
-  login,
-  logout,
-  getCurrentUser,
-  googleAuthSuccess,
-  googleAuthFailure,
-  requestPasswordReset,
-  resetPassword,
-} from "../controllers/authController.js";
-import {
-  authenticateToken,
-  validateAuthInput,
-  handleAuthError,
-} from "../middleware/auth.js";
+import express from 'express';
+import User from '../models/User.js';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 
 const router = express.Router();
 
-// Signup endpoint
-router.post(
-  "/signup",
-  validateAuthInput(["email", "password", "name"]),
-  signup
-);
+// Check if email exists
+router.post('/check-email', async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
 
-// Login endpoint
-router.post("/login", validateAuthInput(["email", "password"]), login);
+    const user = await User.findOne({ email: email.toLowerCase() });
+    
+    res.json({
+      success: true,
+      exists: !!user
+    });
+  } catch (error) {
+    console.error('Error checking email:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error checking email'
+    });
+  }
+});
 
-// Logout endpoint
-router.post("/logout", logout);
+// Validate existing user's password
+router.post('/validate-password', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and password are required'
+      });
+    }
 
-// Get current user (protected route)
-router.get("/me", authenticateToken, getCurrentUser);
+    const user = await User.findOne({ email: email.toLowerCase() });
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
 
-// Google OAuth routes
-router.get(
-  "/google",
-  passport.authenticate("google", {
-    scope: ["profile", "email"],
-  })
-);
-
-router.get(
-  "/google/callback",
-  passport.authenticate("google", {
-    failureRedirect: "/api/auth/google/failure",
-    session: false,
-  }),
-  googleAuthSuccess
-);
-
-router.get("/google/failure", googleAuthFailure);
-
-// Password reset routes
-router.post("/request-password-reset", requestPasswordReset);
-router.post("/reset-password", resetPassword);
-
-// Error handling middleware
-router.use(handleAuthError);
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    
+    res.json({
+      success: true,
+      valid: isPasswordValid
+    });
+  } catch (error) {
+    console.error('Error validating password:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error validating password'
+    });
+  }
+});
 
 export default router;

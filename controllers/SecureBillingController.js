@@ -6,6 +6,7 @@ import AddressVerificationService from "../services/AddressVerificationService.j
 import FraudDetectionService from "../services/FraudDetectionService.js";
 import PaymentErrorHandler from "../services/PaymentErrorHandler.js";
 import crypto from "crypto";
+import bcrypt from "bcryptjs";
 
 const stripe =
   process.env.STRIPE_SECRET_KEY &&
@@ -445,7 +446,35 @@ class SecureBillingController {
           user._isNewUser = true;
           user._createdInThisRequest = Date.now();
         } else {
-          // Existing user found by email - check for conflicts
+          // Existing user found by email - validate password
+          const { password } = req.body;
+          
+          if (!password) {
+            return res.status(400).json({
+              success: false,
+              error: "Password is required for existing users",
+              userFriendly: {
+                title: "Password Required",
+                message: "Please enter your current password to continue with the subscription.",
+              },
+            });
+          }
+
+          // Validate the existing user's password
+          const isPasswordValid = await bcrypt.compare(password, user.password);
+          
+          if (!isPasswordValid) {
+            return res.status(401).json({
+              success: false,
+              error: "Invalid password",
+              userFriendly: {
+                title: "Incorrect Password",
+                message: "The password you entered is incorrect. Please enter your current password to continue.",
+              },
+            });
+          }
+
+          // Check for subscription conflicts
           const conflictCheck = await this.checkSubscriptionConflicts(user, planId);
           if (conflictCheck.hasConflict) {
             return res.status(409).json({
