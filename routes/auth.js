@@ -5,8 +5,21 @@ import jwt from 'jsonwebtoken';
 
 const router = express.Router();
 
+// Handle preflight OPTIONS requests for all auth routes
+router.options('*', (req, res) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.status(200).end();
+});
+
 // Login endpoint
 router.post('/login', async (req, res) => {
+  // Set CORS headers
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
   try {
     const { email, password } = req.body;
     
@@ -184,6 +197,10 @@ router.get('/me', async (req, res) => {
 
 // Request password reset
 router.post('/request-password-reset', async (req, res) => {
+  // Set CORS headers
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
   try {
     const { email } = req.body;
     

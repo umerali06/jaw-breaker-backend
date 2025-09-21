@@ -103,8 +103,12 @@ console.log("CLIENT_URL from env:", clientUrl);
 app.use(
   cors({
     origin: function (origin, callback) {
+      console.log(`CORS request from origin: ${origin}`);
+      console.log(`Allowed origins:`, allowedOrigins);
+      
       // allow requests with no origin (like mobile apps or curl)
       if (!origin || allowedOrigins.includes(origin)) {
+        console.log(`CORS allowing origin: ${origin}`);
         callback(null, true);
       } else {
         console.error(`CORS blocked origin: ${origin}`);
@@ -114,8 +118,24 @@ app.use(
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    optionsSuccessStatus: 200, // Some legacy browsers choke on 204
   })
 );
+
+// Additional CORS middleware for auth routes
+app.use('/api/auth', (req, res, next) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+  
+  next();
+});
 
 // Increase body parser limits for voice transcription
 app.use(express.json({ limit: '50mb' }));
@@ -165,6 +185,16 @@ app.get("/health", (req, res) => {
     message: "Server is running",
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || "development"
+  });
+});
+
+// CORS test endpoint
+app.get("/api/cors-test", (req, res) => {
+  res.json({
+    success: true,
+    message: "CORS is working",
+    origin: req.headers.origin,
+    timestamp: new Date().toISOString()
   });
 });
 
