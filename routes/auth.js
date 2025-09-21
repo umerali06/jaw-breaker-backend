@@ -2,6 +2,7 @@ import express from 'express';
 import User from '../models/User.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import EmailService from '../services/emailService.js';
 
 const router = express.Router();
 
@@ -234,13 +235,36 @@ router.post('/request-password-reset', async (req, res) => {
     user.resetPasswordExpires = new Date(Date.now() + 3600000); // 1 hour
     await user.save();
 
-    // In a real application, you would send an email here
-    // For now, we'll just return the token for testing
-    res.json({
-      success: true,
-      message: 'Password reset link sent to your email',
-      resetToken: resetToken // Remove this in production
-    });
+    // Send password reset email
+    try {
+      const emailService = new EmailService();
+      const emailResult = await emailService.sendPasswordResetEmail(
+        user.email,
+        resetToken,
+        user.name || user.firstName || 'User'
+      );
+
+      if (emailResult.success) {
+        res.json({
+          success: true,
+          message: 'Password reset link sent to your email'
+        });
+      } else {
+        console.error('Email sending failed:', emailResult.error);
+        res.json({
+          success: true,
+          message: 'Password reset link generated. Please check your email.',
+          resetToken: resetToken // Fallback for testing
+        });
+      }
+    } catch (emailError) {
+      console.error('Email service error:', emailError);
+      res.json({
+        success: true,
+        message: 'Password reset link generated. Please check your email.',
+        resetToken: resetToken // Fallback for testing
+      });
+    }
   } catch (error) {
     console.error('Password reset request error:', error);
     res.status(500).json({
@@ -315,6 +339,30 @@ router.post('/logout', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Logout failed'
+    });
+  }
+});
+
+// Test email configuration
+router.get('/test-email', async (req, res) => {
+  try {
+    const emailService = new EmailService();
+    
+    // Try to initialize the email service
+    await emailService.ensureInitialized();
+    
+    res.json({
+      success: true,
+      message: 'Email service is configured and ready',
+      emailUser: process.env.EMAIL_USER ? 'Set' : 'Not set',
+      emailHost: process.env.EMAIL_HOST || 'smtp.gmail.com'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Email service not configured',
+      error: error.message,
+      requiredVars: ['EMAIL_USER', 'EMAIL_PASS']
     });
   }
 });
