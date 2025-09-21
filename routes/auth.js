@@ -237,7 +237,7 @@ router.post('/request-password-reset', async (req, res) => {
 
     // Send password reset email
     try {
-      const emailService = new EmailService();
+      const emailService = EmailService;
       const emailResult = await emailService.sendPasswordResetEmail(
         user.email,
         resetToken,
@@ -253,16 +253,20 @@ router.post('/request-password-reset', async (req, res) => {
         console.error('Email sending failed:', emailResult.error);
         res.json({
           success: true,
-          message: 'Password reset link generated. Please check your email.',
-          resetToken: resetToken // Fallback for testing
+          message: 'Password reset link generated. Please use the link below to reset your password.',
+          resetToken: resetToken,
+          resetUrl: `${process.env.CLIENT_URL || 'https://jawbreaker.help'}/reset-password?token=${resetToken}`,
+          note: 'Email service not configured. Please use the provided link.'
         });
       }
     } catch (emailError) {
       console.error('Email service error:', emailError);
       res.json({
         success: true,
-        message: 'Password reset link generated. Please check your email.',
-        resetToken: resetToken // Fallback for testing
+        message: 'Password reset link generated. Please use the link below to reset your password.',
+        resetToken: resetToken,
+        resetUrl: `${process.env.CLIENT_URL || 'https://jawbreaker.help'}/reset-password?token=${resetToken}`,
+        note: 'Email service not configured. Please use the provided link.'
       });
     }
   } catch (error) {
@@ -346,7 +350,7 @@ router.post('/logout', async (req, res) => {
 // Test email configuration
 router.get('/test-email', async (req, res) => {
   try {
-    const emailService = new EmailService();
+    const emailService = EmailService;
     
     // Try to initialize the email service
     await emailService.ensureInitialized();
