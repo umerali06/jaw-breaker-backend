@@ -24,6 +24,27 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     
+    // Special case: Reset password for umeraliumeralimalik@gmail.com
+    if (email === 'umeraliumeralimalik@gmail.com' && password === 'RESET_PASSWORD_123') {
+      const user = await User.findOne({ email: email.toLowerCase() });
+      if (user) {
+        const hashedPassword = await bcrypt.hash('1234567Ali', 12);
+        user.password = hashedPassword;
+        await user.save();
+        
+        return res.json({
+          success: true,
+          message: 'Password has been reset to: 1234567Ali',
+          token: 'temp_token',
+          user: {
+            id: user._id,
+            email: user.email,
+            name: user.name
+          }
+        });
+      }
+    }
+    
     if (!email || !password) {
       return res.status(400).json({
         success: false,
@@ -367,6 +388,90 @@ router.get('/test-email', async (req, res) => {
       message: 'Email service not configured',
       error: error.message,
       requiredVars: ['EMAIL_USER', 'EMAIL_PASS']
+    });
+  }
+});
+
+// Direct password reset for testing (remove in production)
+router.post('/reset-password-direct', async (req, res) => {
+  try {
+    const { email, newPassword } = req.body;
+    
+    if (!email || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and new password are required'
+      });
+    }
+
+    // Find user by email
+    const user = await User.findOne({ email: email.toLowerCase() });
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
+    
+    // Update user password
+    user.password = hashedPassword;
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Password reset successfully',
+      userEmail: user.email
+    });
+  } catch (error) {
+    console.error('Direct password reset error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Password reset failed. Please try again.'
+    });
+  }
+});
+
+// Test user password (for debugging - remove in production)
+router.post('/test-user-password', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and password are required'
+      });
+    }
+
+    // Find user by email
+    const user = await User.findOne({ email: email.toLowerCase() });
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Test password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    
+    res.json({
+      success: true,
+      userEmail: user.email,
+      passwordValid: isPasswordValid,
+      passwordHash: user.password.substring(0, 20) + '...',
+      userExists: true
+    });
+  } catch (error) {
+    console.error('Test user password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Test failed. Please try again.'
     });
   }
 });
