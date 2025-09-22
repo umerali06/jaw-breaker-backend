@@ -94,7 +94,7 @@ router.post('/login', async (req, res) => {
         lastName: user.lastName,
         profession: user.profession,
         subscriptions: user.subscriptions || [],
-        subscriptionStatus: user.subscriptionStatus || 'inactive'
+        subscriptionStatus: user.subscriptionStatus || null
       }
     });
   } catch (error) {
@@ -102,6 +102,83 @@ router.post('/login', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Login failed. Please try again.'
+    });
+  }
+});
+
+// Signup endpoint
+router.post('/signup', async (req, res) => {
+  // Set CORS headers
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  try {
+    const { email, password, name, firstName, lastName, profession } = req.body;
+    
+    if (!email || !password || !name) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email, password, and name are required'
+      });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'User already exists with this email'
+      });
+    }
+
+    // Create new user (password will be hashed automatically by User model pre-save hook)
+    const user = new User({
+      email: email.toLowerCase(),
+      password: password, // Let the User model handle hashing
+      name,
+      firstName: firstName || name.split(' ')[0],
+      lastName: lastName || name.split(' ').slice(1).join(' '),
+      profession: profession || null,
+      signupSource: 'free',
+      isEmailVerified: false,
+      subscriptionStatus: null, // Use null instead of 'inactive' (not in allowed enum)
+      billingPlan: null
+    });
+
+    await user.save();
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { 
+        userId: user._id, 
+        email: user.email 
+      },
+      process.env.JWT_SECRET || 'your-secret-key',
+      { expiresIn: '7d' }
+    );
+
+    // Return user data and token
+    res.status(201).json({
+      success: true,
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        name: user.name,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        profession: user.profession,
+        subscriptions: user.subscriptions || [],
+        subscriptionStatus: user.subscriptionStatus || null,
+        signupSource: user.signupSource
+      },
+      message: 'Account created successfully'
+    });
+  } catch (error) {
+    console.error('Signup error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Signup failed. Please try again.'
     });
   }
 });
@@ -205,7 +282,7 @@ router.get('/me', async (req, res) => {
         lastName: user.lastName,
         profession: user.profession,
         subscriptions: user.subscriptions || [],
-        subscriptionStatus: user.subscriptionStatus || 'inactive'
+        subscriptionStatus: user.subscriptionStatus || null
       }
     });
   } catch (error) {

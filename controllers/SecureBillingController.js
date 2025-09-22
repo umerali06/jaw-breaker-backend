@@ -474,19 +474,43 @@ class SecureBillingController {
             });
           }
 
-          // Check for subscription conflicts
-          const conflictCheck = await this.checkSubscriptionConflicts(user, planId);
-          if (conflictCheck.hasConflict) {
-            return res.status(409).json({
-              success: false,
-              error: "Subscription conflict",
-              conflict: conflictCheck,
-              userFriendly: {
-                title: "Subscription Already Exists",
-                message: conflictCheck.message,
-                suggestions: conflictCheck.suggestions,
-              },
-            });
+          // Handle free account upgrade to paid subscription
+          if (user.signupSource === 'free' || user.subscriptionStatus === null) {
+            console.log(`🔄 Upgrading free account to paid subscription for user: ${user.email}`);
+            
+            // Update user profile with new information
+            if (req.body.firstName) user.firstName = req.body.firstName;
+            if (req.body.lastName) user.lastName = req.body.lastName;
+            if (req.body.profession) user.profession = req.body.profession;
+            if (req.body.licenseNumber) user.licenseNumber = req.body.licenseNumber;
+            if (req.body.state) user.state = req.body.state;
+            if (req.body.organization) user.organization = req.body.organization;
+            
+            // Update signup source to professional
+            user.signupSource = 'professional';
+            user.isEmailVerified = true; // Auto-verify for paid users
+            
+            // Clear any existing inactive subscriptions
+            user.subscriptions = [];
+            user.subscriptionStatus = null; // Use null instead of 'inactive' (not in allowed enum)
+            user.billingPlan = null;
+            
+            console.log(`✅ Free account upgrade initiated for user: ${user.email}`);
+          } else {
+            // Check for subscription conflicts for existing paid users
+            const conflictCheck = await this.checkSubscriptionConflicts(user, planId);
+            if (conflictCheck.hasConflict) {
+              return res.status(409).json({
+                success: false,
+                error: "Subscription conflict",
+                conflict: conflictCheck,
+                userFriendly: {
+                  title: "Subscription Already Exists",
+                  message: conflictCheck.message,
+                  suggestions: conflictCheck.suggestions,
+                },
+              });
+            }
           }
         }
       }
@@ -741,18 +765,24 @@ class SecureBillingController {
           id: user._id,
           email: user.email,
           isNewUser,
+          isUpgrade: !isNewUser && (user.signupSource === 'professional' || user.subscriptionStatus === 'active'),
         },
         userFriendly: {
-          title: "Subscription Created Successfully",
-          message: `Welcome to ${planId.replace(
-            "-",
-            " "
-          )} plan! Your premium features are now active.`,
-          nextSteps: [
-            "Complete payment confirmation",
-            "Explore your new premium features",
-            "Set up your professional profile",
-          ],
+          title: isNewUser ? "Subscription Created Successfully" : "Account Upgraded Successfully",
+          message: isNewUser 
+            ? `Welcome to ${planId.replace("-", " ")} plan! Your premium features are now active.`
+            : `Your free account has been upgraded to ${planId.replace("-", " ")} plan! Premium features are now active.`,
+          nextSteps: isNewUser 
+            ? [
+                "Complete payment confirmation",
+                "Explore your new premium features",
+                "Set up your professional profile",
+              ]
+            : [
+                "Complete payment confirmation",
+                "Access your upgraded premium features",
+                "Update your professional profile",
+              ],
         },
       });
     } catch (error) {
