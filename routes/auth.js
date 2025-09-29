@@ -553,4 +553,67 @@ router.post('/test-user-password', async (req, res) => {
   }
 });
 
+// Google OAuth routes
+import passport from '../config/passport.js';
+
+// Google OAuth login - redirects to Google
+router.get('/google', (req, res) => {
+  // Set CORS headers
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  console.log('🔐 Google OAuth login initiated');
+  passport.authenticate('google', {
+    scope: ['profile', 'email'],
+    prompt: 'select_account' // Force account selection
+  })(req, res);
+});
+
+// Google OAuth callback
+router.get('/google/callback', 
+  passport.authenticate('google', { failureRedirect: '/login?error=google_auth_failed' }),
+  async (req, res) => {
+    try {
+      console.log('🔐 Google OAuth callback successful for user:', req.user.email);
+      
+      // Generate JWT token for the authenticated user
+      const token = jwt.sign(
+        { 
+          userId: req.user._id, 
+          email: req.user.email,
+          name: req.user.name
+        },
+        process.env.JWT_SECRET || 'your-secret-key',
+        { expiresIn: '7d' }
+      );
+
+      // Determine redirect URL based on environment
+      const frontendUrl = process.env.CLIENT_URL || 'http://localhost:5174';
+      const redirectUrl = `${frontendUrl}/auth/callback?token=${token}&success=true`;
+
+      console.log('🔐 Redirecting to:', redirectUrl);
+      res.redirect(redirectUrl);
+      
+    } catch (error) {
+      console.error('❌ Google OAuth callback error:', error);
+      const frontendUrl = process.env.CLIENT_URL || 'http://localhost:5174';
+      res.redirect(`${frontendUrl}/login?error=google_auth_error`);
+    }
+  }
+);
+
+// Google OAuth status check
+router.get('/google/status', (req, res) => {
+  // Set CORS headers
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  res.json({
+    success: true,
+    configured: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+    clientId: process.env.GOOGLE_CLIENT_ID ? 'Set' : 'Not Set',
+    callbackUrl: process.env.GOOGLE_CALLBACK_URL || 'Not Set'
+  });
+});
+
 export default router;
